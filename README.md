@@ -12,75 +12,87 @@ folder on the host machine — nothing is stored anywhere else.
 - Passcode gate so a stray link-visitor cannot wander in
 - Works on phones
 
+**Nothing to install.** The server is plain Python with no pip packages — no
+`pip install`, no Node, no build step. If the host device has no Python at all,
+the launcher fetches a portable copy into the project folder. Everything stays
+inside this one folder and no step needs administrator rights.
+
 ---
 
-## 1. Install
+## Run it on Windows
 
-You need [Node.js](https://nodejs.org) 18 or newer on the host device.
+1. Put this folder somewhere you can write to — Desktop or Documents is fine.
+2. Copy `.env.example` to `.env` and open it in Notepad. At minimum set a
+   passcode:
 
-```bash
-npm install
-cp .env.example .env
-```
+   ```ini
+   PORT=3000
+   ROOM_PASSWORD=pick-something-good
+   TENOR_API_KEY=
+   ```
 
-Open `.env` and set at least a passcode:
+3. Double-click **`start.bat`**.
 
-```ini
-PORT=3000
-ROOM_PASSWORD=pick-something-good
-TENOR_API_KEY=
-```
-
-## 2. Get a Tenor key (for GIF search)
-
-GIF search is the only part that needs an outside service. Everything else
-works without it — the GIF button simply says it is not configured.
-
-1. Go to <https://developers.google.com/tenor/guides/quickstart> and follow
-   "Get a key": it creates a Google Cloud project and enables the Tenor API.
-2. Copy the API key into `.env` as `TENOR_API_KEY=...`
-3. Restart the server.
-
-The key stays on the host — browsers never see it, they ask your server and
-your server asks Tenor.
-
-## 3. Run it
-
-```bash
-npm start
-```
-
-That prints the local address and where chats are being written:
+That's it. The window prints:
 
 ```
 EasyChat is running
 Local:      http://localhost:3000
-Chats:      /home/you/EasyChat/EasyChat Chats
+Chats:      C:\Users\you\Desktop\EasyChat\EasyChat Chats
 Passcode:   required
-GIF search: on (Tenor)
+GIF search: off (set TENOR_API_KEY in .env)
 ```
 
-## 4. Put it on the internet
+Open <http://localhost:3000> to check it, and leave the window open — closing it
+stops the chat. Anyone on the same office Wi-Fi can already reach it at
+`http://<your-ip>:3000`.
 
-Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/),
-then in a second terminal:
+### Sharing it with the world
+
+Double-click **`share.bat`** instead. It starts the chat *and* opens a
+Cloudflare tunnel, then prints the public link:
+
+```
++--------------------------------------------------+
+|    https://smooth-otter-lake.trycloudflare.com    |
++--------------------------------------------------+
+```
+
+Share that link and the passcode. It lives as long as the window stays open;
+open it again later and you get a different link.
+
+The first run of each script downloads what it needs into the project folder:
+
+| Folder | What lands there | When |
+| --- | --- | --- |
+| `.python\` | A portable Python (~11 MB) | Only if the device has no Python |
+| `.bin\` | `cloudflared.exe` (~40 MB) | Only on the first `share.bat` |
+
+Both are plain unzips, not installers — no admin rights, no registry, nothing
+added to PATH. Delete either folder to undo it.
+
+## Run it on macOS or Linux
+
+python3 is already there, so:
 
 ```bash
-npm run tunnel
+./start.sh      # chat on http://localhost:3000
+./share.sh      # chat plus the public link
 ```
 
-It starts the server if it is not already up, opens a Cloudflare quick tunnel
-and prints the public link:
+## GIF search
 
-```
-┌────────────────────────────────────────┐
-│    https://smooth-otter-lake.trycloudflare.com    │
-└────────────────────────────────────────┘
-```
+GIF search is the only part that talks to an outside service, and it is off
+until you give it a key. Everything else works without one — the GIF button
+just says it is not configured.
 
-Share that link and the passcode. The link lives as long as the command runs —
-stop it and start it again and you get a new one. (Prefer doing it by hand?
-`cloudflared tunnel --url http://localhost:3000` is the whole trick.)
+1. Open <https://developers.google.com/tenor/guides/quickstart> and follow
+   "Get a key".
+2. Put it in `.env` as `TENOR_API_KEY=...`
+3. Restart the chat.
+
+The key stays on the host. Browsers ask *your* server for GIFs and your server
+asks Tenor, so the key is never sent to anyone in the room.
 
 ---
 
@@ -93,7 +105,7 @@ EasyChat Chats/
   design-talk.json
 ```
 
-Each file holds the room and its messages:
+Each file holds one room and its messages:
 
 ```json
 {
@@ -108,20 +120,20 @@ Each file holds the room and its messages:
 ```
 
 Back it up by copying the folder. Delete a file to delete a room (restart
-afterwards). Rooms created from the app's **+** button show up here
-immediately. Only the newest `MAX_MESSAGES_PER_ROOM` messages (2000 by
-default) are kept per file.
-
-Put the folder somewhere else with `CHATS_DIR=/path/to/somewhere` in `.env`.
+afterwards). Rooms made with the **+** button in the app show up here right
+away. Only the newest `MAX_MESSAGES_PER_ROOM` messages (2000 by default) are
+kept per file.
 
 ## Settings
+
+All of these live in `.env`:
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `PORT` | `3000` | Port the server listens on |
 | `ROOM_PASSWORD` | _empty_ | Passcode required to enter. Empty means anyone with the link can join |
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
-| `CHATS_DIR` | `./EasyChat Chats` | Where the JSON files live |
+| `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |
 
 ## Shortcuts
@@ -132,28 +144,61 @@ Put the folder somewhere else with `CHATS_DIR=/path/to/somewhere` in `.env`.
 | `Shift` + `Enter` | New line |
 | `Esc` | Close the GIF picker / menu / dialog |
 
+## If something goes wrong
+
+**"Could not download Python automatically."** Your network probably blocks
+python.org. On any other machine, grab the *Windows embeddable package (64-bit)*
+from <https://www.python.org/downloads/windows/>, unzip it into a folder called
+`.python` next to `start.bat` so that `.python\python.exe` exists, and run
+`start.bat` again.
+
+**cloudflared will not download or run.** Some work machines block unknown
+programs outright. Two ways around it:
+
+- Skip the tunnel and use the local network — `start.bat` alone is enough for
+  anyone on the same Wi-Fi, at `http://<your-ip>:3000`. Find the address with
+  `ipconfig`.
+- Use the SSH client Windows already ships with, which needs no download:
+
+  ```
+  ssh -R 80:localhost:3000 nokey@localhost.run
+  ```
+
+  It prints a public link of its own. It is a different service with the same
+  idea, and no account is needed.
+
+**"Could not listen on port 3000."** Something else is using it. Set a
+different `PORT` in `.env`.
+
+**Antivirus flags the download.** Both files come straight from python.org and
+GitHub's official cloudflared releases. If your policy blocks them, use the
+manual steps above.
+
 ## Good to know
 
-- **It is a quick tunnel, not a fortress.** The passcode keeps strangers out of
-  the room; it is not encryption. Don't share anything you would mind a
-  determined person reading.
+- **A quick tunnel link is public.** The passcode keeps strangers out of the
+  room; it is not encryption. Don't put anything sensitive in there.
 - Messages are HTML-escaped before markdown is applied, so nobody can inject
-  markup or scripts into someone else's browser.
-- Only `https://media*.tenor.com` images can be attached — a client cannot make
-  the room load an arbitrary URL.
+  markup or scripts into anyone else's browser.
+- Only `https://media*.tenor.com` images can be attached — nobody can make the
+  room load an arbitrary URL.
 - There is a light rate limit (10 messages per 10 seconds per connection).
-- Closing the server saves everything on the way out; a browser that loses
-  connection reconnects on its own with a backoff.
+- Closing the window saves everything on the way out, and a browser that loses
+  its connection reconnects on its own.
 
 ## Layout
 
 ```
-server.js            HTTP + WebSocket server, join/typing/presence logic
-lib/store.js         Rooms on disk — one JSON file each
-lib/gifs.js          Tenor proxy and response cache
-scripts/tunnel.js    npm run tunnel
-public/index.html    Markup
-public/css/styles.css  Theme, layout, animations
-public/js/app.js     Client: websocket, rendering, GIF picker
-public/js/markdown.js  The small safe markdown renderer
+start.bat / start.sh      Run the chat
+share.bat / share.sh      Run it and open a public link
+server.py                 Entry point
+share.py                  Tunnel helper (fetches cloudflared)
+scripts/find-python.bat   Locates or fetches Python on Windows
+easychat/config.py        Reads .env
+easychat/store.py         Rooms on disk, one JSON file each
+easychat/wsproto.py       WebSocket framing (stdlib only)
+easychat/httpd.py         Static files, JSON API, the /ws upgrade
+easychat/hub.py           Rooms, presence, typing, broadcasting
+easychat/gifs.py          Tenor proxy and cache
+public/                   The web app (HTML, CSS, JS)
 ```

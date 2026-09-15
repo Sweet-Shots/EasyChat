@@ -1,5 +1,14 @@
-node_modules/
-.env
+# chats stay on the host device only
 EasyChat Chats/
+
+# local settings
+.env
+
+# fetched on first run, never committed
+.python/
+.bin/
+
+__pycache__/
+*.pyc
 *.log
 .DS_Store
