@@ -777,6 +777,7 @@ class Hub:
 
         client.send({"type": "accounts", "accounts": self.accounts.summary(self._online_names())})
         client.send({"type": "account-done", "action": action, "username": username})
+        self.broadcast_all({"type": "profiles", "profiles": self.accounts.profiles()})
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
 
     def _handle_announce(self, client, data):

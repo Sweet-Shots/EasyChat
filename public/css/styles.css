@@ -1705,6 +1705,23 @@ button, input, textarea { font: inherit; color: inherit; }
   letter-spacing: .07em;
 }
 .role-tag--owner { background: #fef3c7; color: #92400e; }
+:root[data-theme="dark"] .role-tag--owner { background: #43310c; color: #fcd34d; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .role-tag--owner { background: #43310c; color: #fcd34d; }
+}
+
+/* the inline version sits next to a name, so it has to stay quiet */
+.role-tag--inline {
+  flex: none;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 8.5px;
+  letter-spacing: .06em;
+  transform: translateY(-1px);
+}
+.member .role-tag--inline { margin-left: 6px; }
+.member--away .role-tag--inline { opacity: .8; }
+.emote .role-tag--inline { align-self: center; }
 .host-badge--owner { background: rgba(255, 224, 138, .35); }
 
 .field__input--area { height: auto; padding: 12px 14px; resize: vertical; line-height: 1.5; }

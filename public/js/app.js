@@ -291,6 +291,24 @@
     return `hsl(${hue} 72% 48%)`;
   }
 
+  /* Owner wins over host: an owner is a host too, but only the higher badge shows. */
+  function roleOf(name) {
+    const profile = state.profiles[name] || {};
+    if (profile.owner) return 'owner';
+    if (profile.host) return 'host';
+    return '';
+  }
+
+  function roleTag(name) {
+    const role = roleOf(name);
+    if (!role) return null;
+    const tag = document.createElement('span');
+    tag.className = `role-tag role-tag--inline${role === 'owner' ? ' role-tag--owner' : ''}`;
+    tag.textContent = role === 'owner' ? 'OWNER' : 'HOST';
+    tag.title = role === 'owner' ? 'Runs this chat' : 'Runs this room';
+    return tag;
+  }
+
   function paintAvatar(node, name) {
     const profile = state.profiles[name] || {};
     node.textContent = '';
@@ -624,7 +642,10 @@
       const time = document.createElement('span');
       time.className = 'row__time';
       time.textContent = timeOf(message.ts);
-      meta.append(author, time);
+      meta.append(author);
+      const badge = roleTag(message.user);
+      if (badge) meta.appendChild(badge);
+      meta.appendChild(time);
       body.appendChild(meta);
     }
 
@@ -652,6 +673,8 @@
         message.user
       )}</b> ` + EasyMarkdown.render(message.text, { me: state.me });
     line.appendChild(body);
+    const emoteBadge = roleTag(message.user);
+    if (emoteBadge) line.appendChild(emoteBadge);
     row.appendChild(line);
     const reactions = buildReactions(message);
     if (reactions) row.appendChild(reactions);
@@ -976,6 +999,8 @@
       name.className = 'member__name';
       name.textContent = member.username;
       item.appendChild(name);
+      const memberBadge = roleTag(member.username);
+      if (memberBadge) item.appendChild(memberBadge);
       if (member.status) {
         item.classList.add('member--away');
         name.title = member.status;
@@ -1223,9 +1248,7 @@
         }
         state.isOwner = Boolean(data.isOwner);
         if (data.token) saveToken(data.token);
-        el.meHost.hidden = !state.isHost;
-        el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
-        el.meHost.classList.toggle('host-badge--owner', state.isOwner);
+        paintMyBadge();
         el.ownerOpen.hidden = !state.isOwner;
         showAnnouncement(data.announcement);
         enterApp();
@@ -1372,9 +1395,7 @@
         state.isHost = Boolean(data.isHost);
         state.isOwner = Boolean(data.isOwner);
         if (data.commands) state.commands = data.commands;
-        el.meHost.hidden = !state.isHost;
-        el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
-        el.meHost.classList.toggle('host-badge--owner', state.isOwner);
+        paintMyBadge();
         el.ownerOpen.hidden = !state.isOwner;
         el.roomSettings.hidden = !state.isHost;
         toast(state.isOwner ? 'You are now an owner.' : state.isHost ? 'You are now a host.' : 'Your role changed.');
@@ -2323,6 +2344,12 @@ ${rows}
 
   for (const button of document.querySelectorAll('[data-theme-choice]')) {
     button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
+  }
+
+  function paintMyBadge() {
+    el.meHost.hidden = !state.isHost;
+    el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
+    el.meHost.classList.toggle('host-badge--owner', state.isOwner);
   }
 
   function myProfile() {

@@ -187,6 +187,10 @@ as `OWNER_USERS=riley`.
 
 Hosts run rooms. Owners run the place.
 
+Both wear a badge beside their name — on every message they send, in the member
+list, and next to your own name in the corner. Someone who is both shows
+**OWNER**, since an owner is a host anyway. Everyone else shows nothing.
+
 ## Owner tools
 
 Owners get a shield button next to their name, opening two panels.

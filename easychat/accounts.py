@@ -226,12 +226,22 @@ class Accounts:
         return record
 
     def profiles(self):
-        """username -> {color, avatar}, for everyone the room might show."""
+        """username -> how to show them: colour, picture, and role.
+
+        Only people who have set something or hold a role appear here - a role
+        badge is meant to be seen, but a plain member's account is nobody's
+        business, so the map is not a roster of everyone registered.
+        """
         with self.lock:
             return {
-                r["username"]: {"color": r.get("color", ""), "avatar": r.get("avatar", "")}
+                r["username"]: {
+                    "color": r.get("color", ""),
+                    "avatar": r.get("avatar", ""),
+                    "owner": bool(r.get("owner")),
+                    "host": bool(r.get("host")) and not r.get("owner"),
+                }
                 for r in self.users.values()
-                if r.get("color") or r.get("avatar")
+                if r.get("color") or r.get("avatar") or r.get("host") or r.get("owner")
             }
 
     def set_password(self, username, new_password):
