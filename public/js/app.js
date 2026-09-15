@@ -1935,15 +1935,15 @@
   el.roomForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const name = el.roomInput.value.trim();
-    const password = el.roomPasswordInput.value;
+    const password = el.roomPasswordInput.value.trim();
     if (name.length < 2) return;
-    if (password.trim().length < 4) {
-      el.roomError.textContent = 'Give the room a password of at least 4 characters.';
+    if (password && password.length < 4) {
+      el.roomError.textContent = 'A room password needs at least 4 characters, or leave it blank.';
       el.roomError.hidden = false;
       return;
     }
-    state.pendingRoomKey = { roomId: null, password: password.trim(), name };
-    send({ type: 'create-room', name, topic: el.roomTopicInput.value.trim(), password: password.trim() });
+    state.pendingRoomKey = password ? { roomId: null, password, name } : null;
+    send({ type: 'create-room', name, topic: el.roomTopicInput.value.trim(), password });
     closeDialog(el.roomModal);
     closeSidebar();
   });

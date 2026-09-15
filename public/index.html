@@ -214,14 +214,14 @@
       <input id="room-input" class="field__input" type="text" maxlength="40" placeholder="design-talk" required />
     </label>
     <label class="field">
-      <span class="field__label">Room password</span>
-      <input id="room-password-input" class="field__input" type="password" maxlength="64" placeholder="At least 4 characters" required />
+      <span class="field__label">Room password <span class="field__opt">optional</span></span>
+      <input id="room-password-input" class="field__input" type="password" maxlength="64" placeholder="Leave blank for an open room" />
     </label>
     <label class="field">
       <span class="field__label">Topic <span class="field__opt">optional</span></span>
       <input id="room-topic-input" class="field__input" type="text" maxlength="120" placeholder="What is this room for?" />
     </label>
-    <p class="modal__hint">Everyone who joins this room has to type this password. Share it with the people you want in.</p>
+    <p class="modal__hint">Leave the password blank and anyone signed in can join. Set one and only the people you give it to can get in.</p>
     <p id="room-error" class="gate__error" role="alert" hidden></p>
     <div class="modal__actions">
       <button id="room-cancel" class="btn btn--ghost" type="button">Cancel</button>

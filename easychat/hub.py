@@ -605,17 +605,20 @@ class Hub:
             return client.send(
                 {"type": "error", "code": "bad-room", "message": "Room names need at least 2 characters."}
             )
-        if len(password.strip()) < ROOM_PASSWORD_MIN:
+        password = password.strip()
+        # blank is allowed and means anyone signed in can walk in
+        if password and len(password) < ROOM_PASSWORD_MIN:
             return client.send(
                 {
                     "type": "error",
                     "code": "weak-room-password",
-                    "message": f"Give the room a password of at least {ROOM_PASSWORD_MIN} characters.",
+                    "message": f"A room password needs at least {ROOM_PASSWORD_MIN} characters, "
+                    "or leave it blank for an open room.",
                 }
             )
         if self.store.has_room_named(name):
             return client.send({"type": "error", "code": "dup-room", "message": f'"{name}" already exists.'})
-        room = self.store.create_room(name, str(data.get("topic") or ""), password.strip())
+        room = self.store.create_room(name, str(data.get("topic") or ""), password)
         client.unlocked.add(room["id"])  # whoever made it is already inside
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
         self.enter_room(client, room["id"])

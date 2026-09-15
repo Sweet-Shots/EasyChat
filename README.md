@@ -9,7 +9,7 @@ folder on the host machine — nothing is stored anywhere else.
 - Real accounts: your username is yours, and you stay signed in across restarts
 - Owner tools: manage every account, walk into any room, post announcements
 - Emoji reactions, dark mode, profile pictures and a colour for your name
-- Every room has its own password, chosen when the room is made
+- Rooms can be open, or locked with their own password
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
 - Paste, drag or attach images and files
@@ -212,13 +212,13 @@ readable, which is usually what you want when someone leaves.
 
 ## Rooms and passwords
 
-Every room made from the **+** button needs a password, typed when the room is
-created. Anyone who clicks that room is asked for it before they see a single
-message, and rooms they cannot open show a padlock in the list.
+A room can have a password, or not. Leave the field blank when you make one and
+anyone signed in can join; set a password and only the people you give it to
+can get in. Locked rooms show a padlock in the list, and anyone who clicks one
+is asked before they see a single message.
 
-The one exception is **General**, the room created on first run. It is open, so
-that people who have the link and the front-door passcode always land
-somewhere. Lock it too if you want — see below.
+**General**, the room created on first run, is open — so people who have the
+link and an account always land somewhere.
 
 A password is remembered for as long as that browser tab is open, so switching
 rooms and reloading do not ask again. Everyone else — a new tab, another
