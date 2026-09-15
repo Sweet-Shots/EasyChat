@@ -21,24 +21,38 @@
       <svg viewBox="0 0 48 48" fill="none"><rect width="48" height="48" rx="14" fill="url(#g)"/><path d="M13 16.5A3.5 3.5 0 0 1 16.5 13h15a3.5 3.5 0 0 1 3.5 3.5v10a3.5 3.5 0 0 1-3.5 3.5H23l-6.2 5.1a1 1 0 0 1-1.6-.8V30h-.2A2 2 0 0 1 13 28Z" fill="#fff"/><path d="M19 19h10M19 24h6.5" stroke="#2563eb" stroke-width="2.4" stroke-linecap="round"/><defs><linearGradient id="g" x1="0" y1="0" x2="48" y2="48"><stop stop-color="#3b82f6"/><stop offset="1" stop-color="#1d4ed8"/></linearGradient></defs></svg>
     </div>
     <h1 class="gate__title">EasyChat</h1>
-    <p class="gate__subtitle">Pick a name and jump in.</p>
+    <p class="gate__subtitle" id="gate-subtitle">Sign in to keep your name to yourself.</p>
+
+    <div class="tabs" role="tablist">
+      <button type="button" class="tabs__tab tabs__tab--on" id="tab-signin" role="tab" aria-selected="true">Sign in</button>
+      <button type="button" class="tabs__tab" id="tab-signup" role="tab" aria-selected="false">Create account</button>
+      <span class="tabs__slider" id="tabs-slider" aria-hidden="true"></span>
+    </div>
 
     <label class="field">
       <span class="field__label">Username</span>
-      <input id="gate-username" class="field__input" type="text" maxlength="24" placeholder="e.g. riley" required />
+      <input id="gate-username" class="field__input" type="text" maxlength="24" placeholder="e.g. riley"
+             autocomplete="username" required />
     </label>
 
-    <label class="field" id="gate-password-field" hidden>
-      <span class="field__label">Passcode</span>
-      <input id="gate-password" class="field__input" type="password" maxlength="64" placeholder="Room passcode" />
+    <label class="field">
+      <span class="field__label">Password</span>
+      <input id="gate-password" class="field__input" type="password" maxlength="128"
+             placeholder="Your password" autocomplete="current-password" required />
+    </label>
+
+    <label class="field" id="gate-invite-field" hidden>
+      <span class="field__label">Invite code</span>
+      <input id="gate-invite" class="field__input" type="password" maxlength="64"
+             placeholder="Ask the host for this" autocomplete="off" />
     </label>
 
     <p id="gate-error" class="gate__error" role="alert" hidden></p>
 
     <button id="gate-submit" class="btn btn--primary btn--block" type="submit">
-      <span class="btn__label">Enter chat</span>
+      <span class="btn__label">Sign in</span>
     </button>
-    <p class="gate__foot">Messages are stored on the host device only.</p>
+    <p class="gate__foot">Accounts and messages stay on the host device.</p>
   </form>
 </section>
 
@@ -78,6 +92,11 @@
         <strong id="me-name">…</strong>
         <span id="conn-state" class="conn conn--live">Connected</span>
       </div>
+      <span id="me-host" class="host-badge" hidden>HOST</span>
+      <button id="sign-out" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
+              aria-label="Sign out" title="Sign out">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 12H5m10 0-3-3m3 3-3 3M11 5h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
     </footer>
   </aside>
 
@@ -187,6 +206,18 @@
       <button class="btn btn--primary" type="submit">Unlock</button>
     </div>
   </form>
+</div>
+
+<!-- ───────── Host offline ───────── -->
+<div id="offline" class="offline" hidden>
+  <div class="offline__card">
+    <div class="modal__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M5 12.5a9 9 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="12" cy="19.5" r="1.4" fill="currentColor"/><path d="M4 4l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </div>
+    <h3 class="modal__title">Can't reach the chat</h3>
+    <p class="modal__hint">The computer hosting this chat looks like it is asleep or offline. Nothing is lost - it comes back when they do.</p>
+    <button id="offline-retry" class="btn btn--primary" type="button">Try again</button>
+  </div>
 </div>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>

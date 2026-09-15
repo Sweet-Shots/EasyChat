@@ -6,11 +6,13 @@ starts talking. Every conversation is a plain JSON file in an **EasyChat Chats**
 folder on the host machine — nothing is stored anywhere else.
 
 - Blue-and-white interface with iMessage-style bubbles and a Discord-style room list
+- Real accounts: your username is yours, and you stay signed in across restarts
 - Every room has its own password, chosen when the room is made
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
 - GIF search powered by Tenor
-- Passcode gate so a stray link-visitor cannot wander in
+- An invite code so a stray link-visitor cannot register
+- Desktop notifications and a chime when you are not looking
 - Works on phones
 
 **Nothing to install.** The server is plain Python with no pip packages — no
@@ -28,7 +30,7 @@ inside this one folder and no step needs administrator rights.
 
    ```ini
    PORT=3000
-   ROOM_PASSWORD=pick-something-good
+   INVITE_CODE=pick-something-good
    TENOR_API_KEY=
    ```
 
@@ -40,7 +42,8 @@ That's it. The window prints:
 EasyChat is running
 Local:      http://localhost:3000
 Chats:      C:\Users\you\Desktop\EasyChat\EasyChat Chats
-Passcode:   required
+Accounts:   0 registered - the first person to register becomes the host
+Invite code: required to register
 GIF search: off (set TENOR_API_KEY in .env)
 ```
 
@@ -59,7 +62,7 @@ Cloudflare tunnel, then prints the public link:
 +--------------------------------------------------+
 ```
 
-Share that link and the passcode. It lives as long as the window stays open;
+Share that link and the invite code. It lives as long as the window stays open;
 open it again later and you get a different link.
 
 The first run of each script downloads what it needs into the project folder:
@@ -96,6 +99,30 @@ The key stays on the host. Browsers ask *your* server for GIFs and your server
 asks Tenor, so the key is never sent to anyone in the room.
 
 ---
+
+## Accounts
+
+The first person to open EasyChat creates an account, and **that first account
+is the host**. Everyone after them signs in with their own username and
+password. A name belongs to whoever registered it, so nobody can type your name
+and speak as you.
+
+If `INVITE_CODE` is set in `.env`, it is required to *create* an account —
+signing in afterwards needs only the person's own password. That is what keeps
+strangers who find the link from registering.
+
+Accounts live in `EasyChat Chats/accounts/users.json`, with passwords stored as
+PBKDF2 hashes like room passwords. Signing in issues a token that lasts 30 days,
+so people are not asked again every time they open the link. Sign out from the
+button next to your name.
+
+**Forgot a password?** Stop the chat, open `users.json`, and replace that
+person's `"password": { ... }` block with plain text — `"password": "new-one"`.
+It is hashed on the next start, exactly like room passwords.
+
+**To remove someone**, delete their entry from `users.json` and restart.
+
+Extra hosts can be named in `.env` as `HOST_USERS=riley,sam`.
 
 ## Rooms and passwords
 
@@ -176,7 +203,8 @@ All of these live in `.env`:
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `PORT` | `3000` | Port the server listens on |
-| `ROOM_PASSWORD` | _empty_ | The front door: passcode typed with your username. Empty means anyone with the link can sign in |
+| `INVITE_CODE` | _empty_ | Required to create an account. Empty means anyone with the link can register |
+| `HOST_USERS` | _empty_ | Extra usernames with host powers, comma separated |
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
 | `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |
@@ -221,10 +249,10 @@ manual steps above.
 
 ## Good to know
 
-- **A quick tunnel link is public.** The passcodes keep strangers out; they are
-  not encryption. Don't put anything sensitive in there.
-- There are two layers: the `ROOM_PASSWORD` in `.env` is the front door for the
-  whole site, and each room has its own password on top of it.
+- **A quick tunnel link is public.** The invite code and passwords keep
+  strangers out; they are not encryption. Don't put anything sensitive in there.
+- There are three layers: the invite code gates who can register, an account
+  password proves who you are, and each room has its own password on top.
 - Room passwords are stored as PBKDF2-SHA256 hashes with a random salt, and a
   room's history is only sent after the password checks out.
 - Messages are HTML-escaped before markdown is applied, so nobody can inject

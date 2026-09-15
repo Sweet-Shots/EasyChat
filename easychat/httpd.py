@@ -17,11 +17,12 @@ class ChatServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, settings, store, hub):
+    def __init__(self, address, handler, settings, store, hub, accounts):
         super().__init__(address, handler)
         self.settings = settings
         self.store = store
         self.hub = hub
+        self.accounts = accounts
 
 
 class ChatHandler(BaseHTTPRequestHandler):
@@ -66,7 +67,11 @@ class ChatHandler(BaseHTTPRequestHandler):
         if path == "/api/config":
             settings = self.server.settings
             return self.send_json(
-                {"requiresPassword": settings.requires_password, "gifsEnabled": settings.gifs_enabled}
+                {
+                    "requiresInvite": settings.requires_password,
+                    "gifsEnabled": settings.gifs_enabled,
+                    "anyAccounts": self.server.accounts.count() > 0,
+                }
             )
         if path.startswith("/api/gifs/"):
             return self.handle_gifs(path.rsplit("/", 1)[-1], query)

@@ -232,6 +232,64 @@ button, input, textarea { font: inherit; color: inherit; }
   50%      { transform: translateX(-4px); }
 }
 
+/* ---------- sign-in tabs ---------- */
+
+.tabs {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 22px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  border: 1.5px solid var(--line);
+}
+.tabs__tab {
+  position: relative;
+  z-index: 1;
+  height: 34px;
+  border: 0;
+  border-radius: 999px;
+  background: none;
+  color: var(--ink-500);
+  font-size: 13.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color .22s var(--ease-soft);
+}
+.tabs__tab--on { color: var(--blue-700); }
+.tabs__slider {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  height: 34px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  transition: transform .28s var(--ease);
+}
+
+.gate--busy .tabs,
+.gate--busy .field,
+.gate--busy .btn,
+.gate--busy .gate__error { display: none; }
+.gate--busy .gate__subtitle { margin-bottom: 8px; }
+.gate--busy .gate__card::after {
+  content: '';
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: 4px auto 10px;
+  border-radius: 50%;
+  border: 2.5px solid var(--blue-100);
+  border-top-color: var(--blue-500);
+  animation: spin .7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ============================================================
    App shell
    ============================================================ */
@@ -391,6 +449,19 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .conn--live::before { background: #4ade80; }
 .conn--down::before { background: #fbbf24; }
+
+.host-badge {
+  margin-left: auto;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .2);
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  color: #fff;
+}
+.sidebar__out { flex: none; margin-left: 4px; }
+.host-badge + .sidebar__out { margin-left: 6px; }
 
 /* ---------- chat column ---------- */
 .chat {
@@ -929,6 +1000,31 @@ button, input, textarea { font: inherit; color: inherit; }
   z-index: 15;
   animation: fade .2s var(--ease-soft) both;
 }
+
+/* ---------- host offline ---------- */
+
+.offline {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(11, 21, 36, .55);
+  backdrop-filter: blur(4px);
+  z-index: 70;
+  animation: fade .3s var(--ease-soft) both;
+}
+.offline__card {
+  width: min(400px, 100%);
+  padding: 30px 28px 26px;
+  border-radius: 22px;
+  background: #fff;
+  box-shadow: var(--shadow-lg);
+  text-align: center;
+  animation: rise .4s var(--ease) both;
+}
+.offline__card .modal__title { margin-bottom: 6px; }
+.offline__card .modal__hint { margin-bottom: 20px; }
 
 .toasts {
   position: fixed;

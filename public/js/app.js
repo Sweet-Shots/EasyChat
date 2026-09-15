@@ -11,9 +11,18 @@
     gateForm: $('gate-form'),
     gateUser: $('gate-username'),
     gatePass: $('gate-password'),
-    gatePassField: $('gate-password-field'),
+    gateInvite: $('gate-invite'),
+    gateInviteField: $('gate-invite-field'),
+    gateSubtitle: $('gate-subtitle'),
     gateError: $('gate-error'),
     gateSubmit: $('gate-submit'),
+    tabSignIn: $('tab-signin'),
+    tabSignUp: $('tab-signup'),
+    tabsSlider: $('tabs-slider'),
+    signOut: $('sign-out'),
+    meHost: $('me-host'),
+    offline: $('offline'),
+    offlineRetry: $('offline-retry'),
 
     app: $('app'),
     scrim: $('scrim'),
@@ -72,9 +81,17 @@
   };
 
   const state = {
+    quietUntil: Date.now() + 2000,
+    faviconUnread: false,
+    audio: null,
+    reconnectTimer: null,
+    queuedJoin: null,
     ws: null,
     me: '',
-    password: '',
+    token: '',
+    mode: 'signin',
+    isHost: false,
+    requiresInvite: false,
     roomId: '',
     rooms: [],
     unread: new Map(),
@@ -90,7 +107,28 @@
     roomKeys: {},      // roomId -> the password this browser has already used
     pendingUnlock: '', // room the unlock dialog is asking about
     pendingRoomKey: null, // password waiting to be confirmed by the server
+    focusReturn: null,
   };
+
+  /* The sign-in token outlives the tab, so you stay signed in like any site. */
+  function saveToken(token) {
+    state.token = token || '';
+    try {
+      if (token) localStorage.setItem('easychat.token', token);
+      else localStorage.removeItem('easychat.token');
+    } catch {
+      /* private mode - you stay signed in until the tab closes */
+    }
+  }
+
+  function loadToken() {
+    try {
+      state.token = localStorage.getItem('easychat.token') || '';
+    } catch {
+      state.token = '';
+    }
+    return state.token;
+  }
 
   /* Room passwords live in this tab only, so a reconnect does not re-ask. */
   function loadRoomKeys() {
@@ -317,10 +355,23 @@
     state.lastMessage = message;
   }
 
-  // spoilers reveal on click
+  // spoilers reveal on click - and, since they are focusable, on Enter/Space too
+  function toggleSpoiler(node) {
+    const open = node.classList.toggle('spoiler--open');
+    node.setAttribute('aria-expanded', String(open));
+  }
+
   el.inner.addEventListener('click', (event) => {
     const spoiler = event.target.closest('.spoiler');
-    if (spoiler) spoiler.classList.toggle('spoiler--open');
+    if (spoiler) toggleSpoiler(spoiler);
+  });
+
+  el.inner.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const spoiler = event.target.closest('.spoiler');
+    if (!spoiler) return;
+    event.preventDefault();
+    toggleSpoiler(spoiler);
   });
 
   /* ---------- rooms & members ---------- */
@@ -387,12 +438,11 @@
     el.unlockInput.value = '';
     el.unlockError.hidden = !errorText;
     if (errorText) el.unlockError.textContent = errorText;
-    el.unlockModal.hidden = false;
-    setTimeout(() => el.unlockInput.focus(), 60);
+    openDialog(el.unlockModal, el.unlockInput);
   }
 
   function closeUnlock() {
-    el.unlockModal.hidden = true;
+    if (!el.unlockModal.hidden) closeDialog(el.unlockModal);
     state.pendingUnlock = '';
   }
 
@@ -450,6 +500,96 @@
     let total = 0;
     for (const count of state.unread.values()) total += count;
     document.title = total ? `(${total}) EasyChat` : 'EasyChat';
+    paintFavicon(total > 0);
+  }
+
+  /* The favicon is drawn here rather than shipped as two files, so the unread
+     dot always matches the mark in the sidebar. */
+  function paintFavicon(unread) {
+    if (state.faviconUnread === unread) return;
+    state.faviconUnread = unread;
+    const dot = unread
+      ? "<circle cx='25' cy='7' r='6.5' fill='%23ef4444' stroke='%23fff' stroke-width='2'/>"
+      : '';
+    const svg =
+      "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>" +
+      "<rect width='32' height='32' rx='9' fill='%232563eb'/>" +
+      "<path d='M8 11.5A2.5 2.5 0 0 1 10.5 9h11A2.5 2.5 0 0 1 24 11.5v7a2.5 2.5 0 0 1-2.5 2.5H15l-4.4 3.5a.8.8 0 0 1-1.3-.6V21h-.3A1.5 1.5 0 0 1 8 19.5Z' fill='white'/>" +
+      dot +
+      '</svg>';
+    let link = document.querySelector("link[rel='icon']");
+    if (!link) {
+      link = document.createElement('link');
+      link.rel = 'icon';
+      document.head.appendChild(link);
+    }
+    link.href = `data:image/svg+xml,${svg}`;
+  }
+
+  /* A short tone built in the browser - no audio file, nothing from a CDN. */
+  function chime() {
+    if (Date.now() < state.quietUntil) return;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      state.audio = state.audio || new Ctx();
+      if (state.audio.state === 'suspended') state.audio.resume();
+      const now = state.audio.currentTime;
+      const gain = state.audio.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      gain.connect(state.audio.destination);
+      [880, 1318.5].forEach((frequency, index) => {
+        const osc = state.audio.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(frequency, now + index * 0.09);
+        osc.connect(gain);
+        osc.start(now + index * 0.09);
+        osc.stop(now + 0.4);
+      });
+    } catch {
+      /* audio is a nicety, never a requirement */
+    }
+  }
+
+  function askToNotify() {
+    if (!('Notification' in window) || !window.isSecureContext) return;
+    if (Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  }
+
+  function notify(message, roomName, mentioned) {
+    if (!document.hidden && !mentioned) return;
+    chime();
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+    try {
+      const body = message.text || (message.attachment ? 'Sent a GIF' : '');
+      const note = new Notification(`${message.user} in ${roomName}`, {
+        body: body.slice(0, 140),
+        tag: `easychat-${message.id}`,
+        silent: true, // the chime already played
+      });
+      note.onclick = () => {
+        window.focus();
+        note.close();
+      };
+    } catch {
+      /* some browsers refuse constructed notifications; the chime stands in */
+    }
+  }
+
+  function mentionsMe(text) {
+    if (!text || !state.me) return false;
+    return new RegExp(`(^|\\s)@${state.me.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'i').test(text);
+  }
+
+  function clearUnreadForRoom() {
+    if (!state.roomId) return;
+    if (state.unread.get(state.roomId)) {
+      state.unread.set(state.roomId, 0);
+      renderRooms();
+    }
   }
 
   /* ---------- typing ---------- */
@@ -508,14 +648,19 @@
 
     ws.addEventListener('open', () => {
       state.reconnectAttempts = 0;
+      el.offline.hidden = true;
       el.connState.textContent = 'Connected';
       el.connState.className = 'conn conn--live';
-      if (state.me) {
+      if (state.queuedJoin) {
+        const queued = state.queuedJoin;
+        state.queuedJoin = null;
+        send({ ...queued, roomId: state.roomId || queued.roomId, roomKeys: state.roomKeys });
+      } else if (state.token) {
         send({
           type: 'join',
-          username: state.me,
-          password: state.password,
-          roomId: state.roomId,
+          mode: 'token',
+          token: state.token,
+          roomId: state.roomId || lastRoom(),
           roomKeys: state.roomKeys,
         });
       }
@@ -532,12 +677,15 @@
     });
 
     ws.addEventListener('close', () => {
-      if (!state.joined) return;
+      if (!state.joined && !state.token) return;
       el.connState.textContent = 'Reconnecting…';
       el.connState.className = 'conn conn--down';
       state.reconnectAttempts += 1;
+      // after a while, stop pretending and say what is actually going on
+      if (state.reconnectAttempts >= 6) el.offline.hidden = false;
       const delay = Math.min(1000 * 2 ** (state.reconnectAttempts - 1), 15000);
-      setTimeout(connect, delay);
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = setTimeout(connect, delay);
     });
 
     ws.addEventListener('error', () => ws.close());
@@ -547,13 +695,19 @@
     switch (data.type) {
       case 'hello':
         state.gifsEnabled = Boolean(data.gifsEnabled);
-        el.gatePassField.hidden = !data.requiresPassword;
+        state.requiresInvite = Boolean(data.requiresInvite);
+        // nobody has registered yet, so the first thing to do is create an account
+        if (!data.anyAccounts && !state.token && !state.joined) setMode('signup');
+        else el.gateInviteField.hidden = !(state.mode === 'signup' && state.requiresInvite);
         break;
 
       case 'welcome':
         state.me = data.username;
+        state.isHost = Boolean(data.isHost);
         state.gifsEnabled = Boolean(data.gifsEnabled);
         state.rooms = data.rooms || [];
+        if (data.token) saveToken(data.token);
+        el.meHost.hidden = !state.isHost;
         enterApp();
         break;
 
@@ -583,24 +737,30 @@
         el.roomTopic.textContent = data.room.topic || '';
         el.roomTopic.hidden = !data.room.topic;
         clearMessages();
+        state.quietUntil = Date.now() + 1500; // history is not "new messages"
         if (!data.messages.length) showEmptyState(`#${data.room.name}`);
         else data.messages.forEach((message) => renderMessage(message, { animate: false }));
         renderMembers(data.members || []);
         renderRooms();
         renderTyping([]);
+        restoreDraft(data.room.id);
         scrollToBottom(false);
         if (previous && previous !== data.room.id) el.input.focus();
         break;
       }
 
       case 'message': {
+        const chat = data.message.type === 'chat' && data.message.user !== state.me;
         if (data.roomId !== state.roomId) {
-          if (data.message.type === 'chat') {
+          if (chat) {
             state.unread.set(data.roomId, (state.unread.get(data.roomId) || 0) + 1);
             renderRooms();
+            const room = state.rooms.find((r) => r.id === data.roomId);
+            notify(data.message, room ? room.name : 'another room', mentionsMe(data.message.text));
           }
           return;
         }
+        if (chat) notify(data.message, el.roomName.textContent, mentionsMe(data.message.text));
         const stick = state.stickToBottom;
         renderMessage(data.message);
         if (stick || data.message.user === state.me) {
@@ -638,15 +798,26 @@
         if (data.code === 'weak-room-password' || data.code === 'dup-room' || data.code === 'bad-room') {
           el.roomError.textContent = data.message;
           el.roomError.hidden = false;
-          el.roomModal.hidden = false;
+          if (el.roomModal.hidden) openDialog(el.roomModal, el.roomInput);
           return;
         }
-        if (!state.joined) showGateError(data.message);
-        else toast(data.message, 'error');
-        if (!state.joined) {
-          el.gateSubmit.disabled = false;
-          el.gateSubmit.querySelector('.btn__label').textContent = 'Enter chat';
+        if (data.code === 'bad-token') {
+          saveToken('');
+          gateBusy(false);
+          setMode('signin');
+          showGateError(data.message);
+          return;
         }
+        if (!state.joined) {
+          showGateError(data.message);
+          gateBusy(false);
+          el.gateSubmit.disabled = false;
+          el.gateSubmit.querySelector('.btn__label').textContent =
+            state.mode === 'signup' ? 'Create account' : 'Sign in';
+          if (data.code === 'name-taken') el.gateUser.focus();
+          return;
+        }
+        toast(data.message, 'error');
         break;
 
       default:
@@ -684,19 +855,76 @@
     }
   }
 
+  function setMode(mode) {
+    state.mode = mode;
+    const up = mode === 'signup';
+    el.tabSignIn.classList.toggle('tabs__tab--on', !up);
+    el.tabSignUp.classList.toggle('tabs__tab--on', up);
+    el.tabSignIn.setAttribute('aria-selected', String(!up));
+    el.tabSignUp.setAttribute('aria-selected', String(up));
+    el.tabsSlider.style.transform = up ? 'translateX(100%)' : 'translateX(0)';
+    el.gateSubtitle.textContent = up
+      ? 'Pick a name and a password. The name is yours after that.'
+      : 'Sign in to keep your name to yourself.';
+    el.gateInviteField.hidden = !(up && state.requiresInvite);
+    el.gatePass.autocomplete = up ? 'new-password' : 'current-password';
+    el.gatePass.placeholder = up ? 'At least 6 characters' : 'Your password';
+    el.gateSubmit.querySelector('.btn__label').textContent = up ? 'Create account' : 'Sign in';
+    el.gateError.hidden = true;
+  }
+
+  el.tabSignIn.addEventListener('click', () => setMode('signin'));
+  el.tabSignUp.addEventListener('click', () => setMode('signup'));
+
+  function gateBusy(busy, label) {
+    el.gate.classList.toggle('gate--busy', busy);
+    el.gateSubmit.disabled = busy;
+    if (busy && label) el.gateSubtitle.textContent = label;
+  }
+
   el.gateForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const username = el.gateUser.value.trim();
+    const password = el.gatePass.value;
     if (username.length < 2) return showGateError('Pick a name with at least 2 characters.');
-    state.me = username;
-    state.password = el.gatePass.value;
+    if (!password) return showGateError('Type your password.');
+    if (state.mode === 'signup' && password.length < 6) {
+      return showGateError('Passwords need at least 6 characters.');
+    }
     el.gateError.hidden = true;
     el.gateSubmit.disabled = true;
-    el.gateSubmit.querySelector('.btn__label').textContent = 'Connecting…';
-    if (!send({ type: 'join', username, password: state.password, roomId: lastRoom(), roomKeys: state.roomKeys })) {
+    el.gateSubmit.querySelector('.btn__label').textContent =
+      state.mode === 'signup' ? 'Creating…' : 'Signing in…';
+    const payload = {
+      type: 'join',
+      mode: state.mode,
+      username,
+      password,
+      invite: el.gateInvite.value,
+      roomId: lastRoom(),
+      roomKeys: state.roomKeys,
+    };
+    if (!send(payload)) {
+      state.queuedJoin = payload;
       connect();
     }
   });
+
+  function signOut() {
+    saveToken('');
+    try {
+      sessionStorage.removeItem('easychat.roomKeys');
+      sessionStorage.removeItem('easychat.lastRoom');
+      sessionStorage.removeItem('easychat.user');
+    } catch {
+      /* ignore */
+    }
+    state.joined = false;
+    if (state.ws) state.ws.close();
+    location.reload();
+  }
+
+  el.signOut.addEventListener('click', signOut);
 
   /* ---------- composer ---------- */
 
@@ -710,9 +938,33 @@
     el.send.disabled = !hasContent || !state.roomId;
   }
 
+  function saveDraft() {
+    if (!state.roomId) return;
+    try {
+      const text = el.input.value;
+      if (text.trim()) localStorage.setItem(`easychat.draft.${state.roomId}`, text);
+      else localStorage.removeItem(`easychat.draft.${state.roomId}`);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function restoreDraft(roomId) {
+    let text = '';
+    try {
+      text = localStorage.getItem(`easychat.draft.${roomId}`) || '';
+    } catch {
+      text = '';
+    }
+    el.input.value = text;
+    autosize();
+    refreshSendState();
+  }
+
   el.input.addEventListener('input', () => {
     autosize();
     refreshSendState();
+    saveDraft();
     if (el.input.value.trim()) signalTyping();
     else stopTyping();
   });
@@ -732,7 +984,9 @@
     const payload = { type: 'message', text };
     if (state.pendingGif) payload.gif = state.pendingGif;
     if (!send(payload)) return toast('Still reconnecting — try again in a second.', 'error');
+    askToNotify();
     el.input.value = '';
+    saveDraft();
     autosize();
     clearAttachment();
     refreshSendState();
@@ -838,18 +1092,15 @@
   /* ---------- rooms UI ---------- */
 
   el.newRoom.addEventListener('click', () => {
-    el.roomModal.hidden = false;
+    openDialog(el.roomModal, el.roomInput);
     el.roomInput.value = '';
     el.roomPasswordInput.value = '';
     el.roomTopicInput.value = '';
     el.roomError.hidden = true;
-    setTimeout(() => el.roomInput.focus(), 60);
   });
-  el.roomCancel.addEventListener('click', () => {
-    el.roomModal.hidden = true;
-  });
+  el.roomCancel.addEventListener('click', () => closeDialog(el.roomModal));
   el.roomModal.addEventListener('click', (event) => {
-    if (event.target === el.roomModal) el.roomModal.hidden = true;
+    if (event.target === el.roomModal) closeDialog(el.roomModal);
   });
   el.roomForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -863,7 +1114,7 @@
     }
     state.pendingRoomKey = { roomId: null, password: password.trim(), name };
     send({ type: 'create-room', name, topic: el.roomTopicInput.value.trim(), password: password.trim() });
-    el.roomModal.hidden = true;
+    closeDialog(el.roomModal);
     closeSidebar();
   });
 
@@ -895,24 +1146,80 @@
   el.sidebarClose.addEventListener('click', closeSidebar);
   el.scrim.addEventListener('click', closeSidebar);
 
+  /* Keeping Tab inside an open dialog, and returning focus where it started. */
+  const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+  function openDialog(node, focusTarget) {
+    state.focusReturn = document.activeElement;
+    node.hidden = false;
+    setTimeout(() => (focusTarget || node.querySelector(FOCUSABLE))?.focus(), 60);
+  }
+
+  function closeDialog(node) {
+    node.hidden = true;
+    const back = state.focusReturn;
+    state.focusReturn = null;
+    if (back && document.contains(back)) back.focus();
+  }
+
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Tab') {
+      const dialog = [el.roomModal, el.unlockModal].find((node) => !node.hidden);
+      if (!dialog) return;
+      const items = [...dialog.querySelectorAll(FOCUSABLE)].filter((node) => !node.disabled);
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (event.key === 'Escape') {
       closeGifPanel();
       closeSidebar();
       closeUnlock();
-      el.roomModal.hidden = true;
+      if (!el.roomModal.hidden) closeDialog(el.roomModal);
     }
   });
 
   window.addEventListener('beforeunload', stopTyping);
+
+  /* A phone suspends the socket the moment you switch apps. Coming back to the
+     tab should feel instant, not like waiting out a backoff timer. */
+  function reconnectNow() {
+    if (!state.token && !state.joined) return;
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
+    clearTimeout(state.reconnectTimer);
+    state.reconnectAttempts = 0;
+    connect();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    clearUnreadForRoom();
+    reconnectNow();
+  });
+  window.addEventListener('online', reconnectNow);
+  window.addEventListener('focus', () => clearUnreadForRoom());
+  el.offlineRetry.addEventListener('click', () => {
+    el.offline.hidden = true;
+    reconnectNow();
+  });
 
   /* ---------- boot ---------- */
 
   fetch('/api/config')
     .then((res) => res.json())
     .then((config) => {
-      el.gatePassField.hidden = !config.requiresPassword;
+      state.requiresInvite = Boolean(config.requiresInvite);
       state.gifsEnabled = Boolean(config.gifsEnabled);
+      if (!config.anyAccounts && !state.token && !state.joined) setMode('signup');
+      else setMode(state.mode);
     })
     .catch(() => {
       /* the websocket hello covers this too */
@@ -925,8 +1232,10 @@
     /* ignore */
   }
 
+  loadToken();
   loadRoomKeys();
+  if (state.token) gateBusy(true, 'Signing you in…');
   refreshSendState();
   connect();
-  el.gateUser.focus();
+  if (!state.token) el.gateUser.focus();
 })();

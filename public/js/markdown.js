@@ -52,7 +52,7 @@
     });
 
     // ||spoiler||
-    out = out.replace(/\|\|([\s\S]+?)\|\|/g, '<span class="spoiler" role="button" tabindex="0">$1</span>');
+    out = out.replace(/\|\|([\s\S]+?)\|\|/g, '<span class="spoiler" role="button" tabindex="0" aria-expanded="false" aria-label="Hidden text, activate to reveal">$1</span>');
 
     // **bold**  __underline__  *italic*  _italic_  ~~strike~~
     out = out.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>');

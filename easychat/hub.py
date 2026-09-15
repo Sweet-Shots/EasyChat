@@ -1,6 +1,5 @@
 """Who is connected, who is in which room, and what gets broadcast."""
 
-import hmac
 import json
 import re
 import threading
@@ -8,6 +7,7 @@ import time
 import uuid
 
 from . import store as store_mod
+from .accounts import AccountError
 
 MAX_TEXT_LENGTH = 4000
 HISTORY_LIMIT = 300
@@ -19,6 +19,8 @@ ROOM_PASSWORD_MIN = 4
 ROOM_PASSWORD_MAX = 64
 UNLOCK_ATTEMPT_LIMIT = 6
 UNLOCK_ATTEMPT_WINDOW = 60
+SIGN_IN_ATTEMPT_LIMIT = 6
+SIGN_IN_ATTEMPT_WINDOW = 60
 
 USERNAME_RE = re.compile(r"^[\w .\-]{2,24}$", re.UNICODE)
 TENOR_URL_RE = re.compile(r"^https://media\d*\.tenor\.com/")
@@ -34,15 +36,18 @@ class Client:
         self.stamps = []
         self.unlocked = set()  # rooms this connection has given the password for
         self.unlock_fails = []
+        self.sign_in_fails = []
+        self.is_host = False
 
     def send(self, payload):
         self.ws.send_text(json.dumps(payload))
 
 
 class Hub:
-    def __init__(self, store, settings):
+    def __init__(self, store, settings, accounts):
         self.store = store
         self.settings = settings
+        self.accounts = accounts
         self.lock = threading.RLock()
         self.clients = {}
         self.typing = {}  # room_id -> {client_id: (username, expires_at)}
@@ -57,8 +62,9 @@ class Hub:
         client.send(
             {
                 "type": "hello",
-                "requiresPassword": self.settings.requires_password,
+                "requiresInvite": self.settings.requires_password,
                 "gifsEnabled": self.settings.gifs_enabled,
+                "anyAccounts": self.accounts.count() > 0,
             }
         )
         return client
@@ -212,33 +218,56 @@ class Hub:
         if kind == "create-room":
             return self._handle_create_room(client, data)
 
-    def _password_ok(self, candidate):
-        if not self.settings.requires_password:
-            return True
-        return hmac.compare_digest(str(candidate or ""), self.settings.room_password)
+    def _sign_in_throttled(self, client):
+        now = time.time()
+        client.sign_in_fails = [t for t in client.sign_in_fails if now - t < SIGN_IN_ATTEMPT_WINDOW]
+        return len(client.sign_in_fails) >= SIGN_IN_ATTEMPT_LIMIT
 
     def _handle_join(self, client, data):
+        """mode: 'token' (already signed in), 'signin', or 'signup'."""
         if client.username:
             return
-        username = re.sub(r"\s+", " ", str(data.get("username") or "")).strip()
-        if not USERNAME_RE.match(username):
+        if self._sign_in_throttled(client):
             return client.send(
                 {
                     "type": "error",
-                    "code": "bad-username",
-                    "message": "2 to 24 characters, letters/numbers/spaces and . _ - only.",
+                    "code": "sign-in-throttled",
+                    "message": "Too many attempts. Wait a minute and try again.",
                 }
             )
-        if not self._password_ok(data.get("password")):
-            return client.send({"type": "error", "code": "bad-password", "message": "That passcode is not right."})
 
-        client.username = username
+        mode = data.get("mode") or ("token" if data.get("token") else "signin")
+        try:
+            if mode == "token":
+                record = self.accounts.check_token(data.get("token"))
+                if not record:
+                    return client.send(
+                        {
+                            "type": "error",
+                            "code": "bad-token",
+                            "message": "Your sign-in has expired. Please sign in again.",
+                        }
+                    )
+            elif mode == "signup":
+                record = self.accounts.register(
+                    data.get("username"), data.get("password"), data.get("invite")
+                )
+            else:
+                record = self.accounts.sign_in(data.get("username"), data.get("password"))
+        except AccountError as err:
+            client.sign_in_fails.append(time.time())
+            return client.send({"type": "error", "code": err.code, "message": err.message})
+
+        client.username = record["username"]
+        client.is_host = bool(record.get("host"))
         client.joined_at = store_mod.now_ms()
         rooms = self.rooms_with_presence()
         client.send(
             {
                 "type": "welcome",
-                "username": username,
+                "username": client.username,
+                "token": self.accounts.issue_token(client.username),
+                "isHost": client.is_host,
                 "rooms": rooms,
                 "gifsEnabled": self.settings.gifs_enabled,
             }

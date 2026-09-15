@@ -6,6 +6,7 @@
 No third-party packages: everything here is Python's standard library.
 """
 
+import atexit
 import os
 import sys
 import threading
@@ -14,12 +15,43 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from easychat import httpd  # noqa: E402
+from easychat.accounts import Accounts  # noqa: E402
 from easychat.config import Settings, load_env  # noqa: E402
 from easychat.hub import Hub  # noqa: E402
 from easychat.store import ChatStore  # noqa: E402
 
 HEARTBEAT_SECONDS = 30
 TYPING_SWEEP_SECONDS = 2.5
+
+ES_CONTINUOUS = 0x80000000
+ES_SYSTEM_REQUIRED = 0x00000001
+
+
+def keep_awake():
+    """Ask Windows not to sleep while the chat is up. Returns a cleanup call.
+
+    A sleeping host takes the chat down with it, so this is worth asking for -
+    but it is only a request: a forced group-policy sleep or a closed lid still
+    wins."""
+    if os.name != "nt":
+        return lambda: None
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)
+    except Exception as err:  # not worth failing a chat server over
+        print(f"[power] could not ask Windows to stay awake: {err}")
+        return lambda: None
+
+    def release():
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS)
+        except Exception:
+            pass
+
+    return release
 
 
 def start_loop(interval, action, name):
@@ -36,12 +68,14 @@ def start_loop(interval, action, name):
     return thread
 
 
-def banner(settings):
+def banner(settings, accounts):
     print()
     print("  EasyChat is running")
     print(f"  Local:      http://localhost:{settings.port}")
     print(f"  Chats:      {settings.chats_dir}")
-    print(f"  Passcode:   {'required' if settings.requires_password else 'none (anyone with the link can join)'}")
+    print(f"  Accounts:   {accounts.count()} registered"
+          f"{' - the first person to register becomes the host' if not accounts.count() else ''}")
+    print(f"  Invite code:{' required to register' if settings.requires_password else ' none (anyone with the link can register)'}")
     print(f"  GIF search: {'on (Tenor)' if settings.gifs_enabled else 'off (set TENOR_API_KEY in .env)'}")
     print()
     print("  Share it:   run share.bat  (Windows)  or  ./share.sh")
@@ -58,18 +92,23 @@ def main():
         return 1
 
     store = ChatStore(settings.chats_dir, settings.max_messages).init()
-    hub = Hub(store, settings)
+    accounts = Accounts(settings.accounts_dir, settings.room_password, settings.host_names).init()
+    hub = Hub(store, settings, accounts)
 
     try:
-        server = httpd.ChatServer(("0.0.0.0", settings.port), httpd.ChatHandler, settings, store, hub)
+        server = httpd.ChatServer(
+            ("0.0.0.0", settings.port), httpd.ChatHandler, settings, store, hub, accounts
+        )
     except OSError as err:
         print(f"\nCould not listen on port {settings.port}: {err}")
         print("Another program may be using it - set PORT in .env to something else.\n")
         return 1
 
+    release_power = keep_awake()
+    atexit.register(release_power)
     start_loop(HEARTBEAT_SECONDS, hub.heartbeat, "heartbeat")
     start_loop(TYPING_SWEEP_SECONDS, hub.sweep_typing, "typing-sweep")
-    banner(settings)
+    banner(settings, accounts)
 
     try:
         server.serve_forever(poll_interval=0.4)
@@ -79,6 +118,8 @@ def main():
         server.shutdown()
         server.server_close()
         store.flush()
+        accounts.save()
+        release_power()
     return 0
 
 

@@ -32,15 +32,21 @@ def _int(name, fallback):
 class Settings:
     def __init__(self):
         self.port = _int("PORT", 3000)
-        self.room_password = os.environ.get("ROOM_PASSWORD", "").strip()
+        self.room_password = (
+            os.environ.get("INVITE_CODE", "").strip() or os.environ.get("ROOM_PASSWORD", "").strip()
+        )
         self.tenor_api_key = os.environ.get("TENOR_API_KEY", "").strip()
         self.max_messages = _int("MAX_MESSAGES_PER_ROOM", 2000)
         chats_dir = os.environ.get("CHATS_DIR", "").strip()
         self.chats_dir = Path(chats_dir).expanduser().resolve() if chats_dir else ROOT / "EasyChat Chats"
         self.public_dir = ROOT / "public"
+        # a subfolder, so the room loader's *.json scan never sees these
+        self.accounts_dir = self.chats_dir / "accounts"
+        self.host_names = [name for name in os.environ.get("HOST_USERS", "").split(",") if name.strip()]
 
     @property
     def requires_password(self):
+        """The invite code, now only asked for when registering."""
         return bool(self.room_password)
 
     @property
