@@ -21,6 +21,9 @@ UNLOCK_ATTEMPT_LIMIT = 6
 UNLOCK_ATTEMPT_WINDOW = 60
 SIGN_IN_ATTEMPT_LIMIT = 6
 SIGN_IN_ATTEMPT_WINDOW = 60
+EDIT_WINDOW_MS = 15 * 60 * 1000
+HISTORY_PAGE = 100
+SEARCH_MIN = 2
 
 USERNAME_RE = re.compile(r"^[\w .\-]{2,24}$", re.UNICODE)
 TENOR_URL_RE = re.compile(r"^https://media\d*\.tenor\.com/")
@@ -217,6 +220,14 @@ class Hub:
             return self.enter_room(client, str(data.get("roomId") or ""), data.get("password"))
         if kind == "create-room":
             return self._handle_create_room(client, data)
+        if kind == "edit":
+            return self._handle_edit(client, data)
+        if kind == "delete":
+            return self._handle_delete(client, data)
+        if kind == "history":
+            return self._handle_history(client, data)
+        if kind == "search":
+            return self._handle_search(client, data)
 
     def _sign_in_throttled(self, client):
         now = time.time()
@@ -396,12 +407,28 @@ class Hub:
         if not text and not attachment:
             return
 
+        reply_to = None
+        parent_id = str(data.get("replyTo") or "")
+        if parent_id:
+            parent = self.store.find_message(client.room_id, parent_id)
+            if parent and parent.get("type") == "chat" and not parent.get("deleted"):
+                excerpt = parent.get("text") or ""
+                if not excerpt and parent.get("attachment"):
+                    excerpt = "GIF"
+                # the server writes the excerpt, so it cannot be forged
+                reply_to = {
+                    "id": parent["id"],
+                    "user": parent.get("user", ""),
+                    "excerpt": excerpt[:120],
+                }
+
         message = {
             "id": uuid.uuid4().hex,
             "type": "chat",
             "user": client.username,
             "text": text,
             "attachment": attachment,
+            "replyTo": reply_to,
             "ts": store_mod.now_ms(),
         }
         self.store.add_message(client.room_id, message)
@@ -430,6 +457,89 @@ class Hub:
         client.unlocked.add(room["id"])  # whoever made it is already inside
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
         self.enter_room(client, room["id"])
+
+    # ---------- changing a message after the fact ----------
+
+    def _own_message(self, client, message_id):
+        """Returns (message, error) - the ownership check every edit goes through."""
+        message = self.store.find_message(client.room_id, message_id)
+        if not message or message.get("type") != "chat":
+            return None, "That message is gone."
+        if message.get("user") != client.username and not client.is_host:
+            return None, "You can only change your own messages."
+        return message, None
+
+    def _handle_edit(self, client, data):
+        if not client.room_id:
+            return
+        text = str(data.get("text") or "")[:MAX_TEXT_LENGTH].strip()
+        if not text:
+            return
+        message, problem = self._own_message(client, str(data.get("id") or ""))
+        if problem:
+            return client.send({"type": "error", "code": "cannot-edit", "message": problem})
+        if message.get("deleted"):
+            return client.send(
+                {"type": "error", "code": "cannot-edit", "message": "That message was deleted."}
+            )
+        if (
+            not client.is_host
+            and store_mod.now_ms() - message.get("ts", 0) > EDIT_WINDOW_MS
+        ):
+            return client.send(
+                {"type": "error", "code": "too-late", "message": "That message is too old to edit."}
+            )
+
+        with self.store.lock:
+            message["text"] = text
+            message["editedAt"] = store_mod.now_ms()
+        self.store.schedule_save(client.room_id)
+        self.broadcast(client.room_id, {"type": "message-update", "roomId": client.room_id, "message": message})
+
+    def _handle_delete(self, client, data):
+        if not client.room_id:
+            return
+        message, problem = self._own_message(client, str(data.get("id") or ""))
+        if problem:
+            return client.send({"type": "error", "code": "cannot-delete", "message": problem})
+
+        # the text really goes - someone deleting a pasted password means it
+        with self.store.lock:
+            message["text"] = ""
+            message["attachment"] = None
+            message["deleted"] = True
+            message["deletedBy"] = client.username
+            message["deletedAt"] = store_mod.now_ms()
+        self.store.schedule_save(client.room_id)
+        self.broadcast(client.room_id, {"type": "message-update", "roomId": client.room_id, "message": message})
+
+    # ---------- older history, and finding things in it ----------
+
+    def _may_read(self, client, room_id):
+        room = self.store.get_room(room_id)
+        if room is None:
+            return False
+        return not store_mod.is_locked(room) or room_id in client.unlocked
+
+    def _handle_history(self, client, data):
+        room_id = str(data.get("roomId") or client.room_id or "")
+        if not self._may_read(client, room_id):
+            return client.send({"type": "error", "code": "no-room", "message": "That room is locked."})
+        try:
+            before = int(data.get("before") or 0)
+        except (TypeError, ValueError):
+            return
+        messages, more = self.store.messages_before(room_id, before, HISTORY_PAGE)
+        client.send({"type": "history", "roomId": room_id, "messages": messages, "more": more})
+
+    def _handle_search(self, client, data):
+        needle = str(data.get("q") or "").strip()
+        if len(needle) < SEARCH_MIN:
+            return client.send({"type": "search", "q": needle, "results": [], "capped": False})
+        # only rooms this connection is actually allowed to read
+        room_ids = [room["id"] for room in self.store.list_rooms() if self._may_read(client, room["id"])]
+        results, capped = self.store.search(room_ids, needle)
+        client.send({"type": "search", "q": needle, "results": results, "capped": capped})
 
     # ---------- heartbeat ----------
 

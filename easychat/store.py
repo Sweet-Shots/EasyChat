@@ -171,6 +171,56 @@ class ChatStore:
         self.schedule_save(room_id)
         return message
 
+    def find_message(self, room_id, message_id):
+        with self.lock:
+            room = self.rooms.get(room_id)
+            if room is None:
+                return None
+            for message in reversed(room["messages"]):  # edits target recent ones
+                if message.get("id") == message_id:
+                    return message
+        return None
+
+    def messages_before(self, room_id, before_ts, limit=100):
+        """The page of history just older than before_ts, oldest first."""
+        with self.lock:
+            room = self.rooms.get(room_id)
+            if room is None:
+                return [], False
+            older = [m for m in room["messages"] if m.get("ts", 0) < before_ts]
+            page = older[-limit:]
+            return list(page), len(older) > len(page)
+
+    def search(self, room_ids, needle, limit=60):
+        """Plain substring match. A few thousand dicts scan in microseconds."""
+        needle = needle.casefold()
+        hits = []
+        with self.lock:
+            for room_id in room_ids:
+                room = self.rooms.get(room_id)
+                if room is None:
+                    continue
+                for message in reversed(room["messages"]):
+                    if message.get("type") != "chat" or message.get("deleted"):
+                        continue
+                    text = message.get("text") or ""
+                    if needle in text.casefold():
+                        hits.append(
+                            {
+                                "roomId": room_id,
+                                "roomName": room["name"],
+                                "messageId": message["id"],
+                                "user": message.get("user", ""),
+                                "ts": message.get("ts", 0),
+                                "text": text[:220],
+                            }
+                        )
+                        if len(hits) >= limit:
+                            hits.sort(key=lambda h: h["ts"], reverse=True)
+                            return hits, True
+        hits.sort(key=lambda h: h["ts"], reverse=True)
+        return hits, False
+
     def schedule_save(self, room_id):
         """Coalesce a burst of messages into one write."""
         with self.lock:

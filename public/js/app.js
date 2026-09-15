@@ -74,6 +74,23 @@
     unlockError: $('unlock-error'),
     unlockCancel: $('unlock-cancel'),
 
+    replyBar: $('reply-bar'),
+    replyBarWho: $('reply-bar-who'),
+    replyBarText: $('reply-bar-text'),
+    replyBarCancel: $('reply-bar-cancel'),
+
+    confirmModal: $('confirm-modal'),
+    confirmText: $('confirm-text'),
+    confirmCancel: $('confirm-cancel'),
+    confirmOk: $('confirm-ok'),
+
+    searchOpen: $('search-open'),
+    searchModal: $('search-modal'),
+    searchInput: $('search-input'),
+    searchClose: $('search-close'),
+    searchResults: $('search-results'),
+    searchStatus: $('search-status'),
+
     meName: $('me-name'),
     meAvatar: $('me-avatar'),
     connState: $('conn-state'),
@@ -108,6 +125,13 @@
     pendingUnlock: '', // room the unlock dialog is asking about
     pendingRoomKey: null, // password waiting to be confirmed by the server
     focusReturn: null,
+    messages: [],
+    rows: new Map(),
+    replyTo: null,
+    pendingDelete: '',
+    hasMore: false,
+    loadingHistory: false,
+    searchTimer: null,
   };
 
   /* The sign-in token outlives the tab, so you stay signed in like any site. */
@@ -230,7 +254,16 @@
     el.jump.hidden = true;
   }
 
+  function loadOlder() {
+    if (state.loadingHistory || !state.hasMore || !state.messages.length) return;
+    const oldest = state.messages[0];
+    state.loadingHistory = true;
+    el.inner.classList.add('messages__inner--loading');
+    send({ type: 'history', roomId: state.roomId, before: oldest.ts });
+  }
+
   el.messages.addEventListener('scroll', () => {
+    if (el.messages.scrollTop < 90) loadOlder();
     state.stickToBottom = nearBottom();
     if (state.stickToBottom) {
       state.missed = 0;
@@ -241,9 +274,13 @@
 
   /* ---------- rendering ---------- */
 
+  /* The messages for the room on screen. Keeping the list here means history
+     can be prepended and a single message re-rendered without guesswork. */
+
   function clearMessages() {
     el.inner.textContent = '';
-    state.lastMessage = null;
+    state.messages = [];
+    state.rows = new Map();
     state.lastDay = '';
   }
 
@@ -257,43 +294,117 @@
     el.inner.appendChild(wrap);
   }
 
-  function addDayDivider(ts) {
-    const label = dayOf(ts);
-    if (label === state.lastDay) return;
-    state.lastDay = label;
-    const node = document.createElement('div');
-    node.className = 'day';
-    node.textContent = label;
-    el.inner.appendChild(node);
-  }
-
-  function renderMessage(message, options) {
-    const animate = !options || options.animate !== false;
+  function dropEmptyState() {
     const empty = el.inner.querySelector('.empty');
     if (empty) empty.remove();
+  }
 
-    if (message.type === 'system') {
-      addDayDivider(message.ts);
-      const node = document.createElement('div');
-      node.className = 'sys';
-      node.textContent = message.text;
-      if (!animate) node.style.animation = 'none';
-      el.inner.appendChild(node);
-      state.lastMessage = null;
-      return;
+  function iconButton(label, path, onClick) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'act';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${path}</svg>`;
+    button.addEventListener('click', onClick);
+    return button;
+  }
+
+  const ICON = {
+    reply: '<path d="M9 7 4 12l5 5M4 12h8.5a6.5 6.5 0 0 1 6.5 6.5V19" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    edit: '<path d="M4 20h4l10-10-4-4L4 16v4ZM14.5 5.5l4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v6M13.5 10.5v6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  };
+
+  /* ---------- one message ---------- */
+
+  function buildBubble(message, mine) {
+    const bubble = document.createElement('div');
+    bubble.className = `bubble ${mine ? 'bubble--me' : 'bubble--them'}`;
+    bubble.title = new Date(message.ts).toLocaleString();
+
+    if (message.deleted) {
+      bubble.classList.add('bubble--deleted');
+      bubble.textContent =
+        message.deletedBy && message.deletedBy !== message.user
+          ? 'Message removed by the host'
+          : 'Message deleted';
+      bubble.removeAttribute('title');
+      return bubble;
     }
 
-    addDayDivider(message.ts);
+    if (message.attachment && message.attachment.kind === 'gif') {
+      bubble.classList.add('bubble--gif');
+      const img = document.createElement('img');
+      img.className = 'bubble__gif';
+      img.loading = 'lazy';
+      img.src = message.attachment.url;
+      img.alt = message.attachment.title || 'GIF';
+      if (message.attachment.width && message.attachment.height) {
+        img.style.aspectRatio = `${message.attachment.width} / ${message.attachment.height}`;
+      }
+      img.addEventListener('load', () => {
+        if (state.stickToBottom) scrollToBottom(false);
+      });
+      bubble.appendChild(img);
+      if (message.text) {
+        const caption = document.createElement('div');
+        caption.className = 'bubble__caption';
+        caption.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
+        bubble.appendChild(caption);
+      }
+    } else {
+      bubble.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
+    }
 
+    if (message.editedAt) {
+      const mark = document.createElement('span');
+      mark.className = 'bubble__edited';
+      mark.textContent = 'edited';
+      mark.title = `Edited ${new Date(message.editedAt).toLocaleString()}`;
+      bubble.appendChild(mark);
+    }
+    return bubble;
+  }
+
+  function buildReplyQuote(message) {
+    const quote = document.createElement('button');
+    quote.type = 'button';
+    quote.className = 'reply-quote';
+    quote.dataset.target = message.replyTo.id;
+    quote.innerHTML =
+      `<span class="reply-quote__who">${EasyMarkdown.escapeHtml(message.replyTo.user)}</span>` +
+      `<span class="reply-quote__text">${EasyMarkdown.escapeHtml(EasyMarkdown.plain(message.replyTo.excerpt))}</span>`;
+    quote.addEventListener('click', () => jumpToMessage(message.replyTo.id));
+    return quote;
+  }
+
+  function buildActions(message, mine) {
+    const bar = document.createElement('div');
+    bar.className = 'row__actions';
+    bar.appendChild(iconButton('Reply', ICON.reply, () => startReply(message)));
+    const fresh = Date.now() - message.ts < 15 * 60 * 1000;
+    if (mine && fresh && !message.attachment) {
+      bar.appendChild(iconButton('Edit', ICON.edit, () => startEdit(message)));
+    }
+    if (mine || state.isHost) {
+      bar.appendChild(iconButton('Delete', ICON.trash, () => confirmDelete(message)));
+    }
+    return bar;
+  }
+
+  function buildRow(message, previous) {
     const mine = message.user === state.me;
     const stacked =
-      state.lastMessage &&
-      state.lastMessage.user === message.user &&
-      message.ts - state.lastMessage.ts < 5 * 60 * 1000;
+      previous &&
+      previous.type === 'chat' &&
+      previous.user === message.user &&
+      !message.replyTo &&
+      message.ts - previous.ts < 5 * 60 * 1000;
 
     const row = document.createElement('div');
     row.className = `row${mine ? ' row--me' : ''}${stacked ? ' row--stack' : ''}`;
-    if (!animate) row.style.animation = 'none';
+    row.dataset.id = message.id;
 
     if (stacked) {
       const spacer = document.createElement('div');
@@ -321,38 +432,169 @@
       body.appendChild(meta);
     }
 
-    const bubble = document.createElement('div');
-    bubble.className = `bubble ${mine ? 'bubble--me' : 'bubble--them'}`;
-    bubble.title = new Date(message.ts).toLocaleString();
+    if (message.replyTo) body.appendChild(buildReplyQuote(message));
+    body.appendChild(buildBubble(message, mine));
+    if (!message.deleted) body.appendChild(buildActions(message, mine));
 
-    if (message.attachment && message.attachment.kind === 'gif') {
-      bubble.classList.add('bubble--gif');
-      const img = document.createElement('img');
-      img.className = 'bubble__gif';
-      img.loading = 'lazy';
-      img.src = message.attachment.url;
-      img.alt = message.attachment.title || 'GIF';
-      if (message.attachment.width && message.attachment.height) {
-        img.style.aspectRatio = `${message.attachment.width} / ${message.attachment.height}`;
+    row.appendChild(body);
+    return row;
+  }
+
+  function dayDivider(ts) {
+    const node = document.createElement('div');
+    node.className = 'day';
+    node.textContent = dayOf(ts);
+    return node;
+  }
+
+  /* Rebuilt from state.messages, so prepending history cannot leave stale
+     dividers or wrong grouping behind. */
+  function renderAll() {
+    el.inner.textContent = '';
+    state.rows = new Map();
+    let previous = null;
+    let day = '';
+    for (const message of state.messages) {
+      const label = dayOf(message.ts);
+      if (label !== day) {
+        day = label;
+        el.inner.appendChild(dayDivider(message.ts));
+        previous = null;
       }
-      img.addEventListener('load', () => {
-        if (state.stickToBottom) scrollToBottom(false);
-      });
-      bubble.appendChild(img);
-      if (message.text) {
-        const caption = document.createElement('div');
-        caption.className = 'bubble__caption';
-        caption.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
-        bubble.appendChild(caption);
+      if (message.type === 'system') {
+        const node = document.createElement('div');
+        node.className = 'sys';
+        node.style.animation = 'none';
+        node.textContent = message.text;
+        el.inner.appendChild(node);
+        previous = null;
+        continue;
       }
-    } else {
-      bubble.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
+      const row = buildRow(message, previous);
+      row.style.animation = 'none';
+      el.inner.appendChild(row);
+      state.rows.set(message.id, row);
+      previous = message;
+    }
+    state.lastDay = day;
+  }
+
+  function renderMessage(message, options) {
+    const animate = !options || options.animate !== false;
+    dropEmptyState();
+    state.messages.push(message);
+
+    const label = dayOf(message.ts);
+    if (label !== state.lastDay) {
+      state.lastDay = label;
+      el.inner.appendChild(dayDivider(message.ts));
+      state.lastMessage = null;
     }
 
-    body.appendChild(bubble);
-    row.appendChild(body);
+    if (message.type === 'system') {
+      const node = document.createElement('div');
+      node.className = 'sys';
+      node.textContent = message.text;
+      if (!animate) node.style.animation = 'none';
+      el.inner.appendChild(node);
+      state.lastMessage = null;
+      return;
+    }
+
+    const row = buildRow(message, state.lastMessage);
+    if (!animate) row.style.animation = 'none';
     el.inner.appendChild(row);
+    state.rows.set(message.id, row);
     state.lastMessage = message;
+  }
+
+  function applyUpdate(updated) {
+    const index = state.messages.findIndex((message) => message.id === updated.id);
+    if (index === -1) return;
+    state.messages[index] = updated;
+    const row = state.rows.get(updated.id);
+    if (!row) return;
+    const mine = updated.user === state.me;
+    const body = row.querySelector('.row__body');
+    body.querySelector('.bubble').replaceWith(buildBubble(updated, mine));
+    const actions = body.querySelector('.row__actions');
+    if (actions) actions.remove();
+    if (!updated.deleted) body.appendChild(buildActions(updated, mine));
+    const quote = body.querySelector('.reply-quote');
+    if (updated.deleted && quote) quote.remove();
+    row.classList.add('row--flash');
+    setTimeout(() => row.classList.remove('row--flash'), 700);
+  }
+
+  function jumpToMessage(id) {
+    const row = state.rows.get(id);
+    if (!row) return toast('That message is further back than this view goes.');
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.add('row--flash');
+    setTimeout(() => row.classList.remove('row--flash'), 900);
+  }
+
+  /* ---------- replying, editing, deleting ---------- */
+
+  function startReply(message) {
+    state.replyTo = { id: message.id, user: message.user, excerpt: message.text || 'GIF' };
+    el.replyBarWho.textContent = message.user;
+    el.replyBarText.textContent = EasyMarkdown.plain(message.text || 'GIF').slice(0, 120);
+    el.replyBar.hidden = false;
+    el.input.focus();
+  }
+
+  function cancelReply() {
+    state.replyTo = null;
+    el.replyBar.hidden = true;
+  }
+
+  function startEdit(message) {
+    const row = state.rows.get(message.id);
+    if (!row || row.querySelector('.edit-box')) return;
+    const bubble = row.querySelector('.bubble');
+    const box = document.createElement('div');
+    box.className = 'edit-box';
+    const area = document.createElement('textarea');
+    area.className = 'edit-box__input';
+    area.value = message.text;
+    area.rows = Math.min(6, message.text.split('\n').length);
+    const hint = document.createElement('p');
+    hint.className = 'edit-box__hint';
+    hint.innerHTML = '<kbd>Enter</kbd> save · <kbd>Esc</kbd> cancel';
+    box.append(area, hint);
+    bubble.replaceWith(box);
+    area.focus();
+    area.setSelectionRange(area.value.length, area.value.length);
+
+    // Enter and blur can both fire; only the first one counts
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      const text = area.value.trim();
+      if (box.parentNode) box.replaceWith(bubble);
+      if (save && text && text !== message.text) send({ type: 'edit', id: message.id, text });
+    };
+    area.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        finish(true);
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        finish(false);
+      }
+    });
+    area.addEventListener('blur', () => finish(true));
+  }
+
+  function confirmDelete(message) {
+    state.pendingDelete = message.id;
+    el.confirmText.textContent =
+      message.user === state.me
+        ? 'Delete this message? The text is removed for everyone.'
+        : `Remove this message from ${message.user}? The text is removed for everyone.`;
+    openDialog(el.confirmModal, el.confirmCancel);
   }
 
   // spoilers reveal on click - and, since they are focusable, on Enter/Space too
@@ -738,6 +980,9 @@
         el.roomTopic.hidden = !data.room.topic;
         clearMessages();
         state.quietUntil = Date.now() + 1500; // history is not "new messages"
+        state.hasMore = data.messages.length >= 300;
+        state.loadingHistory = false;
+        cancelReply();
         if (!data.messages.length) showEmptyState(`#${data.room.name}`);
         else data.messages.forEach((message) => renderMessage(message, { animate: false }));
         renderMembers(data.members || []);
@@ -771,6 +1016,28 @@
         }
         break;
       }
+
+      case 'message-update':
+        if (data.roomId === state.roomId) applyUpdate(data.message);
+        break;
+
+      case 'history': {
+        if (data.roomId !== state.roomId) return;
+        state.loadingHistory = false;
+        state.hasMore = Boolean(data.more);
+        el.inner.classList.remove('messages__inner--loading');
+        if (!data.messages.length) return;
+        const keepHeight = el.messages.scrollHeight;
+        const keepTop = el.messages.scrollTop;
+        state.messages = data.messages.concat(state.messages);
+        renderAll();
+        el.messages.scrollTop = keepTop + (el.messages.scrollHeight - keepHeight);
+        break;
+      }
+
+      case 'search':
+        renderSearchResults(data);
+        break;
 
       case 'no-room':
         showNoRoom();
@@ -983,12 +1250,14 @@
     if (!text && !state.pendingGif) return;
     const payload = { type: 'message', text };
     if (state.pendingGif) payload.gif = state.pendingGif;
+    if (state.replyTo) payload.replyTo = state.replyTo.id;
     if (!send(payload)) return toast('Still reconnecting — try again in a second.', 'error');
     askToNotify();
     el.input.value = '';
     saveDraft();
     autosize();
     clearAttachment();
+    cancelReply();
     refreshSendState();
     stopTyping();
   });
@@ -1118,6 +1387,111 @@
     closeSidebar();
   });
 
+  el.replyBarCancel.addEventListener('click', cancelReply);
+
+  /* ---------- deleting ---------- */
+
+  el.confirmCancel.addEventListener('click', () => {
+    state.pendingDelete = '';
+    closeDialog(el.confirmModal);
+  });
+  el.confirmModal.addEventListener('click', (event) => {
+    if (event.target === el.confirmModal) {
+      state.pendingDelete = '';
+      closeDialog(el.confirmModal);
+    }
+  });
+  el.confirmOk.addEventListener('click', () => {
+    if (state.pendingDelete) send({ type: 'delete', id: state.pendingDelete });
+    state.pendingDelete = '';
+    closeDialog(el.confirmModal);
+  });
+
+  /* ---------- search ---------- */
+
+  function openSearch() {
+    if (!state.joined) return;
+    openDialog(el.searchModal, el.searchInput);
+    el.searchInput.value = '';
+    el.searchResults.textContent = '';
+    el.searchStatus.textContent = 'Type at least two characters.';
+  }
+
+  function closeSearch() {
+    if (!el.searchModal.hidden) closeDialog(el.searchModal);
+  }
+
+  function renderSearchResults(data) {
+    el.searchResults.textContent = '';
+    if (!data.results.length) {
+      el.searchStatus.textContent = data.q.length < 2 ? 'Type at least two characters.' : 'Nothing found.';
+      return;
+    }
+    el.searchStatus.textContent = data.capped
+      ? 'Showing the first 60 matches, newest first.'
+      : `${data.results.length} ${data.results.length === 1 ? 'match' : 'matches'}, newest first.`;
+
+    const needle = data.q.toLowerCase();
+    for (const hit of data.results) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'hit';
+
+      const head = document.createElement('div');
+      head.className = 'hit__head';
+      head.innerHTML =
+        `<span class="hit__room">#${EasyMarkdown.escapeHtml(hit.roomName)}</span>` +
+        `<span class="hit__who">${EasyMarkdown.escapeHtml(hit.user)}</span>` +
+        `<span class="hit__when">${new Date(hit.ts).toLocaleString()}</span>`;
+
+      const body = document.createElement('div');
+      body.className = 'hit__text';
+      // highlight the match without letting the message text become markup
+      const index = hit.text.toLowerCase().indexOf(needle);
+      if (index === -1) {
+        body.textContent = hit.text;
+      } else {
+        body.append(
+          document.createTextNode(hit.text.slice(0, index)),
+          Object.assign(document.createElement('mark'), {
+            textContent: hit.text.slice(index, index + needle.length),
+          }),
+          document.createTextNode(hit.text.slice(index + needle.length))
+        );
+      }
+
+      item.append(head, body);
+      item.addEventListener('click', () => {
+        closeSearch();
+        if (hit.roomId === state.roomId) {
+          jumpToMessage(hit.messageId);
+        } else {
+          const room = state.rooms.find((r) => r.id === hit.roomId);
+          if (room) openRoom(room);
+          toast(`Opening #${hit.roomName}`);
+        }
+      });
+      el.searchResults.appendChild(item);
+    }
+  }
+
+  el.searchOpen.addEventListener('click', openSearch);
+  el.searchClose.addEventListener('click', closeSearch);
+  el.searchModal.addEventListener('click', (event) => {
+    if (event.target === el.searchModal) closeSearch();
+  });
+  el.searchInput.addEventListener('input', () => {
+    clearTimeout(state.searchTimer);
+    const q = el.searchInput.value.trim();
+    if (q.length < 2) {
+      el.searchResults.textContent = '';
+      el.searchStatus.textContent = 'Type at least two characters.';
+      return;
+    }
+    el.searchStatus.textContent = 'Searching…';
+    state.searchTimer = setTimeout(() => send({ type: 'search', q }), 220);
+  });
+
   /* ---------- unlocking a room ---------- */
 
   el.unlockForm.addEventListener('submit', (event) => {
@@ -1163,8 +1537,14 @@
   }
 
   document.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      return openSearch();
+    }
     if (event.key === 'Tab') {
-      const dialog = [el.roomModal, el.unlockModal].find((node) => !node.hidden);
+      const dialog = [el.roomModal, el.unlockModal, el.searchModal, el.confirmModal].find(
+        (node) => !node.hidden
+      );
       if (!dialog) return;
       const items = [...dialog.querySelectorAll(FOCUSABLE)].filter((node) => !node.disabled);
       if (!items.length) return;
@@ -1183,7 +1563,13 @@
       closeGifPanel();
       closeSidebar();
       closeUnlock();
+      closeSearch();
+      if (!el.confirmModal.hidden) {
+        state.pendingDelete = '';
+        closeDialog(el.confirmModal);
+      }
       if (!el.roomModal.hidden) closeDialog(el.roomModal);
+      if (state.replyTo && document.activeElement === el.input) cancelReply();
     }
   });
 

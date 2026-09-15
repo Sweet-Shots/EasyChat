@@ -128,5 +128,20 @@
     return html;
   }
 
-  global.EasyMarkdown = { render, escapeHtml };
+  /** Markdown stripped back to readable text, for quotes and previews. */
+  function plain(raw) {
+    return String(raw || '')
+      .replace(/```[a-z0-9+#-]*\n?([\s\S]*?)```/gi, '$1')
+      .replace(/`([^`\n]+)`/g, '$1')
+      .replace(/\|\|([\s\S]+?)\|\|/g, '$1')
+      .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
+      .replace(/__([\s\S]*?)__/g, '$1')
+      .replace(/~~([\s\S]*?)~~/g, '$1')
+      .replace(/(^|[^*\w])\*([^*\n]*?)\*(?!\*)/g, '$1$2')
+      .replace(/^\s*>\s?/gm, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  global.EasyMarkdown = { render, escapeHtml, plain };
 })(window);
