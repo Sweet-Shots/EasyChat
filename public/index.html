@@ -93,6 +93,10 @@
         <span id="conn-state" class="conn conn--live">Connected</span>
       </div>
       <span id="me-host" class="host-badge" hidden>HOST</span>
+      <button id="owner-open" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
+              aria-label="Owner tools" title="Owner tools" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5.5c0 4.2 2.9 8.2 7 9.5 4.1-1.3 7-5.3 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button id="sign-out" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
               aria-label="Sign out" title="Sign out">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 12H5m10 0-3-3m3 3-3 3M11 5h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -109,6 +113,12 @@
         <h2 id="room-name">…</h2>
         <p id="room-topic" class="chat__topic"></p>
       </div>
+      <button id="room-settings" class="icon-btn chat__search" type="button" aria-label="Room settings" title="Room settings" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2" fill="none"/><path d="M19.4 14a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V20a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 18.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="save-chat" class="icon-btn chat__search" type="button" aria-label="Save this conversation" title="Save this conversation">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button id="search-open" class="icon-btn chat__search" type="button" aria-label="Search messages" title="Search (Ctrl+K)">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="2" fill="none"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       </button>
@@ -233,6 +243,77 @@
   </form>
 </div>
 
+<!-- ───────── Owner tools ───────── -->
+<div id="owner-modal" class="modal" hidden>
+  <div class="modal__card modal__card--wide owner">
+    <div class="owner__head">
+      <h3 class="modal__title">Owner tools</h3>
+      <div class="tabs tabs--small" role="tablist">
+        <button type="button" class="tabs__tab tabs__tab--on" id="owner-tab-people" role="tab" aria-selected="true">People</button>
+        <button type="button" class="tabs__tab" id="owner-tab-announce" role="tab" aria-selected="false">Announcement</button>
+        <span class="tabs__slider" id="owner-slider" aria-hidden="true"></span>
+      </div>
+      <button id="owner-close" class="icon-btn icon-btn--sm" type="button" aria-label="Close owner tools">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+
+    <div id="owner-people" class="owner__panel">
+      <ul id="owner-list" class="owner__list"></ul>
+    </div>
+
+    <div id="owner-announce" class="owner__panel" hidden>
+      <label class="field">
+        <span class="field__label">Announcement</span>
+        <textarea id="announce-text" class="field__input field__input--area" maxlength="400" rows="3"
+                  placeholder="Everyone sees this in the corner until you clear it."></textarea>
+      </label>
+      <span class="field__label">Colour</span>
+      <div id="announce-colors" class="swatches"></div>
+      <div id="announce-preview" class="sticky sticky--preview">
+        <div class="sticky__bar"></div>
+        <div class="sticky__body">
+          <strong class="sticky__from">Preview</strong>
+          <p class="sticky__text" id="announce-preview-text">Your announcement appears like this.</p>
+        </div>
+      </div>
+      <p id="announce-error" class="gate__error" role="alert" hidden></p>
+      <div class="modal__actions">
+        <button id="announce-clear" class="btn btn--ghost btn--warn" type="button">Clear current</button>
+        <button id="announce-send" class="btn btn--primary" type="button">Post announcement</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ───────── Room settings (host) ───────── -->
+<div id="settings-modal" class="modal" hidden>
+  <div class="modal__card">
+    <h3 class="modal__title">Room settings</h3>
+    <p class="modal__hint" id="settings-room"></p>
+
+    <label class="field">
+      <span class="field__label">New room password</span>
+      <input id="settings-password" class="field__input" type="password" maxlength="64" placeholder="At least 4 characters" />
+    </label>
+    <p id="settings-error" class="gate__error" role="alert" hidden></p>
+    <div class="settings__row">
+      <button id="settings-set" class="btn btn--primary" type="button">Change password</button>
+      <button id="settings-open" class="btn btn--ghost" type="button">Remove password</button>
+    </div>
+
+    <div class="settings__people">
+      <span class="field__label">People in this room</span>
+      <ul id="settings-members" class="settings__list"></ul>
+    </div>
+
+    <div class="modal__actions">
+      <button id="settings-delete" class="btn btn--ghost btn--warn" type="button">Delete room</button>
+      <button id="settings-close" class="btn btn--ghost" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- ───────── Confirm delete ───────── -->
 <div id="confirm-modal" class="modal" hidden>
   <div class="modal__card modal__card--center">
@@ -273,6 +354,17 @@
     <p class="modal__hint">The computer hosting this chat looks like it is asleep or offline. Nothing is lost - it comes back when they do.</p>
     <button id="offline-retry" class="btn btn--primary" type="button">Try again</button>
   </div>
+</div>
+
+<div id="sticky" class="sticky" hidden>
+  <div class="sticky__bar"></div>
+  <div class="sticky__body">
+    <strong class="sticky__from" id="sticky-from"></strong>
+    <p class="sticky__text" id="sticky-text"></p>
+  </div>
+  <button id="sticky-close" class="sticky__close" type="button" aria-label="Dismiss announcement">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+  </button>
 </div>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>

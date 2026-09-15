@@ -88,6 +88,38 @@
     confirmCancel: $('confirm-cancel'),
     confirmOk: $('confirm-ok'),
 
+    ownerOpen: $('owner-open'),
+    ownerModal: $('owner-modal'),
+    ownerClose: $('owner-close'),
+    ownerTabPeople: $('owner-tab-people'),
+    ownerTabAnnounce: $('owner-tab-announce'),
+    ownerSlider: $('owner-slider'),
+    ownerPeople: $('owner-people'),
+    ownerAnnounce: $('owner-announce'),
+    ownerList: $('owner-list'),
+    announceText: $('announce-text'),
+    announceColors: $('announce-colors'),
+    announcePreview: $('announce-preview'),
+    announcePreviewText: $('announce-preview-text'),
+    announceError: $('announce-error'),
+    announceSend: $('announce-send'),
+    announceClear: $('announce-clear'),
+    sticky: $('sticky'),
+    stickyFrom: $('sticky-from'),
+    stickyText: $('sticky-text'),
+    stickyClose: $('sticky-close'),
+
+    saveChat: $('save-chat'),
+    roomSettings: $('room-settings'),
+    settingsModal: $('settings-modal'),
+    settingsRoom: $('settings-room'),
+    settingsPassword: $('settings-password'),
+    settingsError: $('settings-error'),
+    settingsSet: $('settings-set'),
+    settingsOpenRoom: $('settings-open'),
+    settingsMembers: $('settings-members'),
+    settingsDelete: $('settings-delete'),
+    settingsClose: $('settings-close'),
     searchOpen: $('search-open'),
     searchModal: $('search-modal'),
     searchInput: $('search-input'),
@@ -133,6 +165,12 @@
     rows: new Map(),
     replyTo: null,
     pendingDelete: '',
+    pendingRoomDelete: '',
+    members: [],
+    isOwner: false,
+    accounts: [],
+    announceColor: '#dc2626',
+    announcementId: '',
     hasMore: false,
     loadingHistory: false,
     searchTimer: null,
@@ -730,12 +768,16 @@
       item.appendChild(button);
       el.roomList.appendChild(item);
     });
+    // a host may have just locked or unlocked the room you are sitting in
+    const current = state.rooms.find((room) => room.id === state.roomId);
+    if (current) el.roomLock.hidden = !current.locked;
     updateTitle();
   }
 
   function openRoom(room) {
     const key = state.roomKeys[room.id];
-    if (room.locked && !key) return askForRoomPassword(room.id, room.name);
+    // an owner is let in by the server, so do not stop to ask them
+    if (room.locked && !key && !state.isOwner) return askForRoomPassword(room.id, room.name);
     send({ type: 'switch', roomId: room.id, password: key || '' });
   }
 
@@ -781,6 +823,7 @@
   }
 
   function renderMembers(members) {
+    state.members = members;
     el.memberList.textContent = '';
     el.memberCount.textContent = String(members.length);
     el.roomOnline.textContent = `${members.length} online`;
@@ -893,6 +936,8 @@
 
   function clearUnreadForRoom() {
     if (!state.roomId) return;
+    const newest = [...state.messages].reverse().find((message) => message.type === 'chat');
+    if (newest) send({ type: 'read', roomId: state.roomId, ts: newest.ts });
     if (state.unread.get(state.roomId)) {
       state.unread.set(state.roomId, 0);
       renderRooms();
@@ -1013,8 +1058,16 @@
         state.isHost = Boolean(data.isHost);
         state.gifsEnabled = Boolean(data.gifsEnabled);
         state.rooms = data.rooms || [];
+        if (data.unread) {
+          state.unread = new Map(Object.entries(data.unread).filter(([, count]) => count > 0));
+        }
+        state.isOwner = Boolean(data.isOwner);
         if (data.token) saveToken(data.token);
         el.meHost.hidden = !state.isHost;
+        el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
+        el.meHost.classList.toggle('host-badge--owner', state.isOwner);
+        el.ownerOpen.hidden = !state.isOwner;
+        showAnnouncement(data.announcement);
         enterApp();
         break;
 
@@ -1039,6 +1092,7 @@
         closeUnlock();
         setComposerEnabled(true);
         el.roomLock.hidden = !data.room.locked;
+        el.roomSettings.hidden = !state.isHost;
         el.roomName.classList.remove('is-empty');
         el.roomName.textContent = data.room.name;
         el.roomTopic.textContent = data.room.topic || '';
@@ -1070,7 +1124,10 @@
           }
           return;
         }
-        if (chat) notify(data.message, el.roomName.textContent, mentionsMe(data.message.text));
+        if (chat) {
+          notify(data.message, el.roomName.textContent, mentionsMe(data.message.text));
+          if (!document.hidden) send({ type: 'read', roomId: state.roomId, ts: data.message.ts });
+        }
         const stick = state.stickToBottom;
         renderMessage(data.message);
         if (stick || data.message.user === state.me) {
@@ -1108,6 +1165,71 @@
         }
         break;
 
+      case 'accounts':
+        state.accounts = data.accounts || [];
+        renderAccounts();
+        break;
+
+      case 'account-done':
+        toast(
+          data.action === 'delete'
+            ? `Deleted ${data.username}.`
+            : data.action === 'rename'
+              ? 'Account renamed.'
+              : 'Account updated.'
+        );
+        break;
+
+      case 'announcement':
+        state.dismissed = '';
+        showAnnouncement(data.announcement);
+        break;
+
+      case 'role':
+        state.isHost = Boolean(data.isHost);
+        state.isOwner = Boolean(data.isOwner);
+        el.meHost.hidden = !state.isHost;
+        el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
+        el.meHost.classList.toggle('host-badge--owner', state.isOwner);
+        el.ownerOpen.hidden = !state.isOwner;
+        el.roomSettings.hidden = !state.isHost;
+        toast(state.isOwner ? 'You are now an owner.' : state.isHost ? 'You are now a host.' : 'Your role changed.');
+        break;
+
+      case 'renamed':
+        state.me = data.username;
+        if (data.token) saveToken(data.token);
+        el.meName.textContent = data.username;
+        toast(`An owner renamed you to ${data.username}.`);
+        break;
+
+      case 'signed-out':
+        saveToken('');
+        toast(data.message || 'You were signed out.', 'error');
+        setTimeout(() => location.reload(), 1500);
+        break;
+
+      case 'settings-done':
+        closeDialog(el.settingsModal);
+        toast(
+          data.action === 'set-password'
+            ? 'Room password changed. Everyone else has to type the new one.'
+            : data.action === 'open-room'
+              ? 'Room password removed.'
+              : 'Room deleted.'
+        );
+        break;
+
+      case 'removed':
+        toast(
+          data.banned
+            ? `You were removed from ${data.roomName}.`
+            : `You were moved out of ${data.roomName}.`,
+          'error'
+        );
+        forgetRoomKey(data.roomId);
+        break;
+
       case 'search':
         renderSearchResults(data);
         break;
@@ -1134,6 +1256,16 @@
           forgetRoomKey(data.roomId);
           renderRooms();
           return askForRoomPassword(data.roomId, data.roomName, data.message);
+        }
+        if (!el.settingsModal.hidden && (data.code === 'weak-room-password' || data.code === 'last-room')) {
+          el.settingsError.textContent = data.message;
+          el.settingsError.hidden = false;
+          return;
+        }
+        if (data.code === 'banned') {
+          forgetRoomKey(data.roomId);
+          renderRooms();
+          return toast(data.message, 'error');
         }
         if (data.code === 'weak-room-password' || data.code === 'dup-room' || data.code === 'bad-room') {
           el.roomError.textContent = data.message;
@@ -1643,8 +1775,13 @@
     }
   });
   el.confirmOk.addEventListener('click', () => {
-    if (state.pendingDelete) send({ type: 'delete', id: state.pendingDelete });
+    if (state.pendingRoomDelete) {
+      send({ type: 'room-settings', roomId: state.pendingRoomDelete, action: 'delete-room' });
+    } else if (state.pendingDelete) {
+      send({ type: 'delete', id: state.pendingDelete });
+    }
     state.pendingDelete = '';
+    state.pendingRoomDelete = '';
     closeDialog(el.confirmModal);
   });
 
@@ -1716,6 +1853,321 @@
     }
   }
 
+  function exportConversation() {
+    if (!state.roomId || !state.messages.length) return toast('Nothing to save yet.');
+    const roomName = el.roomName.textContent;
+    const rows = state.messages
+      .map((message) => {
+        if (message.type === 'system') {
+          return `<p class="sys">${EasyMarkdown.escapeHtml(message.text)}</p>`;
+        }
+        const when = new Date(message.ts).toLocaleString();
+        const who = EasyMarkdown.escapeHtml(message.user);
+        if (message.deleted) {
+          return `<div class="m"><div class="h"><b>${who}</b><time>${when}</time></div><p class="gone">Message deleted</p></div>`;
+        }
+        let body = EasyMarkdown.render(message.text, { me: '' });
+        const attachment = message.attachment;
+        if (attachment) {
+          const label = attachment.name || attachment.title || 'attachment';
+          body += `<p class="att">Attachment: <a href="${EasyMarkdown.escapeHtml(
+            attachment.url
+          )}">${EasyMarkdown.escapeHtml(label)}</a></p>`;
+        }
+        return `<div class="m"><div class="h"><b>${who}</b><time>${when}</time></div>${body}</div>`;
+      })
+      .join('\n');
+
+    const html = `<!doctype html>
+<meta charset="utf-8">
+<title>${EasyMarkdown.escapeHtml(roomName)} - EasyChat</title>
+<style>
+ body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#0b1524;background:#fff;margin:0;padding:32px 20px;}
+ main{max-width:720px;margin:0 auto;}
+ h1{font-size:22px;margin:0 0 4px;}
+ .meta{color:#5b6b83;font-size:13px;margin:0 0 26px;}
+ .m{padding:10px 14px;border-left:3px solid #bfd6fe;border-radius:0 10px 10px 0;background:#f6f9ff;margin:0 0 10px;}
+ .h{display:flex;gap:10px;align-items:baseline;margin-bottom:3px;}
+ .h b{color:#1e40af;font-size:13.5px;}
+ .h time{color:#94a3b8;font-size:11.5px;}
+ .m p{margin:0;}
+ .sys{color:#94a3b8;font-size:12.5px;text-align:center;margin:12px 0;}
+ .gone{color:#94a3b8;font-style:italic;}
+ .att{font-size:12.5px;color:#5b6b83;margin-top:6px;}
+ code{background:rgba(15,42,107,.08);padding:2px 5px;border-radius:5px;font-size:.9em;}
+ pre{background:rgba(15,42,107,.07);padding:10px 12px;border-radius:10px;overflow-x:auto;}
+ blockquote{margin:4px 0;padding-left:10px;border-left:3px solid #93b8fd;color:#2c3a4f;}
+ .note{margin-top:28px;padding-top:14px;border-top:1px solid #e6ecf5;color:#94a3b8;font-size:12px;}
+</style>
+<main>
+<h1>${EasyMarkdown.escapeHtml(roomName)}</h1>
+<p class="meta">Saved ${new Date().toLocaleString()} by ${EasyMarkdown.escapeHtml(state.me)} - ${
+      state.messages.length
+    } messages</p>
+${rows}
+<p class="note">Saved from EasyChat. Attachment links only work while the chat that hosted them is running.</p>
+</main>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${roomName.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${new Date()
+      .toISOString()
+      .slice(0, 10)}.html`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+    toast('Saved to your downloads.');
+  }
+
+  /* ---------- owner tools ---------- */
+
+  const ANNOUNCE_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed'];
+
+  function showAnnouncement(announcement) {
+    if (!announcement || !announcement.text) {
+      el.sticky.hidden = true;
+      state.announcementId = '';
+      return;
+    }
+    if (state.dismissed === announcement.id) return;
+    state.announcementId = announcement.id;
+    el.sticky.style.setProperty('--sticky', announcement.color || '#dc2626');
+    el.stickyFrom.textContent = `${announcement.from}`;
+    el.stickyText.textContent = announcement.text;
+    el.sticky.hidden = false;
+  }
+
+  el.stickyClose.addEventListener('click', () => {
+    state.dismissed = state.announcementId;
+    el.sticky.hidden = true;
+  });
+
+  function ownerTab(which) {
+    const people = which === 'people';
+    el.ownerTabPeople.classList.toggle('tabs__tab--on', people);
+    el.ownerTabAnnounce.classList.toggle('tabs__tab--on', !people);
+    el.ownerTabPeople.setAttribute('aria-selected', String(people));
+    el.ownerTabAnnounce.setAttribute('aria-selected', String(!people));
+    el.ownerSlider.style.transform = people ? 'translateX(0)' : 'translateX(100%)';
+    el.ownerPeople.hidden = !people;
+    el.ownerAnnounce.hidden = people;
+  }
+
+  el.ownerTabPeople.addEventListener('click', () => ownerTab('people'));
+  el.ownerTabAnnounce.addEventListener('click', () => ownerTab('announce'));
+
+  function openOwner() {
+    if (!state.isOwner) return;
+    ownerTab('people');
+    el.announceError.hidden = true;
+    send({ type: 'accounts' });
+    openDialog(el.ownerModal, el.ownerClose);
+  }
+
+  el.ownerOpen.addEventListener('click', openOwner);
+  el.ownerClose.addEventListener('click', () => closeDialog(el.ownerModal));
+  el.ownerModal.addEventListener('click', (event) => {
+    if (event.target === el.ownerModal) closeDialog(el.ownerModal);
+  });
+
+  function ago(ts) {
+    if (!ts) return 'never';
+    const minutes = Math.floor((Date.now() - ts) / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return new Date(ts).toLocaleDateString();
+  }
+
+  function renderAccounts() {
+    el.ownerList.textContent = '';
+    for (const account of state.accounts) {
+      const item = document.createElement('li');
+      item.className = 'owner__person';
+
+      const who = document.createElement('div');
+      who.className = 'owner__who';
+      who.appendChild(avatarFor(account.username, 'sm'));
+      const names = document.createElement('div');
+      names.className = 'owner__names';
+      const title = document.createElement('strong');
+      title.textContent = account.username;
+      const sub = document.createElement('span');
+      sub.textContent = account.online ? 'online now' : `last seen ${ago(account.lastSeen)}`;
+      names.append(title, sub);
+      who.appendChild(names);
+      if (account.owner || account.host) {
+        const tag = document.createElement('span');
+        tag.className = `role-tag${account.owner ? ' role-tag--owner' : ''}`;
+        tag.textContent = account.owner ? 'OWNER' : 'HOST';
+        who.appendChild(tag);
+      }
+      item.appendChild(who);
+
+      const actions = document.createElement('div');
+      actions.className = 'owner__actions';
+      const me = account.username === state.me;
+
+      const act = (label, handler, warn) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `btn btn--ghost btn--tiny${warn ? ' btn--warn' : ''}`;
+        button.textContent = label;
+        button.addEventListener('click', handler);
+        actions.appendChild(button);
+        return button;
+      };
+
+      if (!account.owner) {
+        act(account.host ? 'Remove host' : 'Make host', () =>
+          send({ type: 'account-action', action: 'set-host', username: account.username, value: !account.host })
+        );
+      }
+      if (!me) {
+        act(account.owner ? 'Remove owner' : 'Make owner', () =>
+          send({ type: 'account-action', action: 'set-owner', username: account.username, value: !account.owner })
+        );
+      }
+      act('Reset password', () => {
+        const password = prompt(`New password for ${account.username} (at least 6 characters):`);
+        if (password) {
+          send({ type: 'account-action', action: 'reset-password', username: account.username, password });
+        }
+      });
+      act('Rename', () => {
+        const newName = prompt(`Rename ${account.username} to:`, account.username);
+        if (newName && newName !== account.username) {
+          send({ type: 'account-action', action: 'rename', username: account.username, newName });
+        }
+      });
+      if (!me) {
+        act('Delete', () => {
+          if (confirm(`Delete the account "${account.username}"? Their messages stay, their sign-in goes.`)) {
+            send({ type: 'account-action', action: 'delete', username: account.username });
+          }
+        }, true);
+      }
+
+      item.appendChild(actions);
+      el.ownerList.appendChild(item);
+    }
+  }
+
+  function buildSwatches() {
+    el.announceColors.textContent = '';
+    for (const colour of ANNOUNCE_COLORS) {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = `swatch${colour === state.announceColor ? ' swatch--on' : ''}`;
+      swatch.style.background = colour;
+      swatch.setAttribute('aria-label', `Use ${colour}`);
+      swatch.addEventListener('click', () => {
+        state.announceColor = colour;
+        buildSwatches();
+        el.announcePreview.style.setProperty('--sticky', colour);
+      });
+      el.announceColors.appendChild(swatch);
+    }
+    el.announcePreview.style.setProperty('--sticky', state.announceColor);
+  }
+
+  el.announceText.addEventListener('input', () => {
+    el.announcePreviewText.textContent =
+      el.announceText.value.trim() || 'Your announcement appears like this.';
+  });
+
+  el.announceSend.addEventListener('click', () => {
+    const text = el.announceText.value.trim();
+    if (!text) {
+      el.announceError.textContent = 'Type the announcement first.';
+      el.announceError.hidden = false;
+      return;
+    }
+    send({ type: 'announce', text, color: state.announceColor });
+    el.announceError.hidden = true;
+    closeDialog(el.ownerModal);
+    toast('Announcement posted to everyone.');
+  });
+
+  el.announceClear.addEventListener('click', () => {
+    send({ type: 'announce', text: '' });
+    el.announceText.value = '';
+    el.announcePreviewText.textContent = 'Your announcement appears like this.';
+    toast('Announcement cleared.');
+  });
+
+  /* ---------- host: room settings ---------- */
+
+  function openSettings() {
+    if (!state.isHost || !state.roomId) return;
+    el.settingsRoom.textContent = `#${el.roomName.textContent}`;
+    el.settingsPassword.value = '';
+    el.settingsError.hidden = true;
+    renderSettingsMembers();
+    openDialog(el.settingsModal, el.settingsPassword);
+  }
+
+  function renderSettingsMembers() {
+    el.settingsMembers.textContent = '';
+    for (const member of state.members || []) {
+      const item = document.createElement('li');
+      item.className = 'settings__person';
+      item.appendChild(avatarFor(member.username, 'sm'));
+      const name = document.createElement('span');
+      name.textContent = member.username;
+      item.appendChild(name);
+      if (member.username !== state.me) {
+        const kick = document.createElement('button');
+        kick.type = 'button';
+        kick.className = 'btn btn--ghost btn--tiny';
+        kick.textContent = 'Remove';
+        kick.addEventListener('click', () => {
+          send({ type: 'remove-member', username: member.username, ban: true });
+          item.remove();
+        });
+        item.appendChild(kick);
+      }
+      el.settingsMembers.appendChild(item);
+    }
+    if (!el.settingsMembers.children.length) {
+      const empty = document.createElement('li');
+      empty.className = 'settings__person settings__person--none';
+      empty.textContent = 'Nobody else is here right now.';
+      el.settingsMembers.appendChild(empty);
+    }
+  }
+
+  el.roomSettings.addEventListener('click', openSettings);
+  el.settingsClose.addEventListener('click', () => closeDialog(el.settingsModal));
+  el.settingsModal.addEventListener('click', (event) => {
+    if (event.target === el.settingsModal) closeDialog(el.settingsModal);
+  });
+  el.settingsSet.addEventListener('click', () => {
+    const password = el.settingsPassword.value.trim();
+    if (password.length < 4) {
+      el.settingsError.textContent = 'Room passwords need at least 4 characters.';
+      el.settingsError.hidden = false;
+      return;
+    }
+    rememberRoomKey(state.roomId, password);
+    send({ type: 'room-settings', roomId: state.roomId, action: 'set-password', password });
+  });
+  el.settingsOpenRoom.addEventListener('click', () => {
+    forgetRoomKey(state.roomId);
+    send({ type: 'room-settings', roomId: state.roomId, action: 'open-room' });
+  });
+  el.settingsDelete.addEventListener('click', () => {
+    state.pendingDelete = '';
+    el.confirmText.textContent = `Delete #${el.roomName.textContent} and everything in it? This cannot be undone.`;
+    state.pendingRoomDelete = state.roomId;
+    closeDialog(el.settingsModal);
+    openDialog(el.confirmModal, el.confirmCancel);
+  });
+
+  el.saveChat.addEventListener('click', exportConversation);
   el.searchOpen.addEventListener('click', openSearch);
   el.searchClose.addEventListener('click', closeSearch);
   el.searchModal.addEventListener('click', (event) => {
@@ -1859,6 +2311,7 @@
     /* ignore */
   }
 
+  buildSwatches();
   loadToken();
   loadRoomKeys();
   if (state.token) gateBusy(true, 'Signing you in…');

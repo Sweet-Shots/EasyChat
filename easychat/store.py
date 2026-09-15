@@ -171,6 +171,47 @@ class ChatStore:
         self.save(room_id)
         return room
 
+    def rename_user(self, old, new):
+        """Move every mention of a name across, so history keeps its author."""
+        touched = []
+        with self.lock:
+            for room_id, room in self.rooms.items():
+                changed = False
+                for message in room["messages"]:
+                    if message.get("user") == old:
+                        message["user"] = new
+                        changed = True
+                    if message.get("deletedBy") == old:
+                        message["deletedBy"] = new
+                        changed = True
+                    reply = message.get("replyTo")
+                    if isinstance(reply, dict) and reply.get("user") == old:
+                        reply["user"] = new
+                        changed = True
+                banned = room.get("banned")
+                if isinstance(banned, list) and old in banned:
+                    room["banned"] = [new if name == old else name for name in banned]
+                    changed = True
+                if changed:
+                    touched.append(room_id)
+        for room_id in touched:
+            self.save(room_id)
+        return touched
+
+    def delete_room(self, room_id):
+        with self.lock:
+            timer = self._timers.pop(room_id, None)
+            if timer:
+                timer.cancel()
+            room = self.rooms.pop(room_id, None)
+        if room is None:
+            return False
+        try:
+            self.file_path(room_id).unlink()
+        except OSError:
+            pass
+        return True
+
     def add_message(self, room_id, message):
         with self.lock:
             room = self.rooms.get(room_id)

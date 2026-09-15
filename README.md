@@ -7,6 +7,7 @@ folder on the host machine — nothing is stored anywhere else.
 
 - Blue-and-white interface with iMessage-style bubbles and a Discord-style room list
 - Real accounts: your username is yours, and you stay signed in across restarts
+- Owner tools: manage every account, walk into any room, post announcements
 - Every room has its own password, chosen when the room is made
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
@@ -104,7 +105,7 @@ asks Tenor, so the key is never sent to anyone in the room.
 ## Accounts
 
 The first person to open EasyChat creates an account, and **that first account
-is the host**. Everyone after them signs in with their own username and
+is the owner**. Everyone after them signs in with their own username and
 password. A name belongs to whoever registered it, so nobody can type your name
 and speak as you.
 
@@ -123,7 +124,43 @@ It is hashed on the next start, exactly like room passwords.
 
 **To remove someone**, delete their entry from `users.json` and restart.
 
-Extra hosts can be named in `.env` as `HOST_USERS=riley,sam`.
+Extra hosts can be named in `.env` as `HOST_USERS=riley,sam`, and extra owners
+as `OWNER_USERS=riley`.
+
+### Three levels
+
+| | Member | Host | Owner |
+| --- | --- | --- | --- |
+| Send, edit and delete their own messages | yes | yes | yes |
+| Delete anyone's message, change a room's password, remove people from a room, delete a room | | yes | yes |
+| See every account, change roles, reset passwords, rename and delete accounts | | | yes |
+| Open any room without its password | | | yes |
+| Post an announcement everyone sees | | | yes |
+
+Hosts run rooms. Owners run the place.
+
+## Owner tools
+
+Owners get a shield button next to their name, opening two panels.
+
+**People** lists every account with when it was created, when it was last seen,
+and whether it is online now. For each one an owner can make them a host or an
+owner, reset their password, rename them, or delete the account. A rename
+carries through the whole history, so old messages keep their author, and the
+person stays signed in because sign-in tokens follow a hidden account id rather
+than the name.
+
+Two things are deliberately refused: you cannot remove the last owner, and you
+cannot change your own role. Both are checked on the server, so neither can be
+worked around from the browser.
+
+**Announcement** posts a note that appears in the bottom-right corner for
+everyone, in a colour the owner picks. It stays until cleared, so people who
+arrive later still see it, and anyone can dismiss their own copy. Clearing it
+takes it off everyone's screen.
+
+Deleting an account removes its sign-in, not its messages — history stays
+readable, which is usually what you want when someone leaves.
 
 ## Rooms and passwords
 
@@ -233,6 +270,7 @@ All of these live in `.env`:
 | `PORT` | `3000` | Port the server listens on |
 | `INVITE_CODE` | _empty_ | Required to create an account. Empty means anyone with the link can register |
 | `HOST_USERS` | _empty_ | Extra usernames with host powers, comma separated |
+| `OWNER_USERS` | _empty_ | Extra usernames with owner powers, comma separated |
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
 | `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |

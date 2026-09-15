@@ -46,6 +46,7 @@ class Settings:
         self.max_upload_mb = _int("MAX_UPLOAD_MB", 10)
         self.max_storage_mb = _int("MAX_STORAGE_MB", 1024)
         self.host_names = [name for name in os.environ.get("HOST_USERS", "").split(",") if name.strip()]
+        self.owner_names = [name for name in os.environ.get("OWNER_USERS", "").split(",") if name.strip()]
 
     @property
     def requires_password(self):

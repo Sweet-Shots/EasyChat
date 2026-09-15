@@ -1,6 +1,7 @@
 """Who is connected, who is in which room, and what gets broadcast."""
 
 import json
+import os
 import re
 import threading
 import time
@@ -37,6 +38,7 @@ class Client:
         self.room_id = None
         self.joined_at = 0
         self.stamps = []
+        self.is_owner = False
         self.unlocked = set()  # rooms this connection has given the password for
         self.unlock_fails = []
         self.sign_in_fails = []
@@ -47,11 +49,14 @@ class Client:
 
 
 class Hub:
-    def __init__(self, store, settings, accounts, uploads):
+    def __init__(self, store, settings, accounts, uploads, read_state):
         self.store = store
         self.settings = settings
         self.accounts = accounts
         self.uploads = uploads
+        self.read_state = read_state
+        self.announcement_path = settings.accounts_dir / "announcement.json"
+        self.announcement = self._load_announcement()
         self.lock = threading.RLock()
         self.clients = {}
         self.typing = {}  # room_id -> {client_id: (username, expires_at)}
@@ -229,6 +234,25 @@ class Hub:
             return self._handle_history(client, data)
         if kind == "search":
             return self._handle_search(client, data)
+        if kind == "accounts":
+            return self._handle_accounts(client)
+        if kind == "account-action":
+            return self._handle_account_action(client, data)
+        if kind == "announce":
+            return self._handle_announce(client, data)
+        if kind == "room-settings":
+            return self._handle_room_settings(client, data)
+        if kind == "remove-member":
+            return self._handle_remove_member(client, data)
+        if kind == "read":
+            room_id = str(data.get("roomId") or "")
+            try:
+                ts = int(data.get("ts") or 0)
+            except (TypeError, ValueError):
+                return
+            if room_id and self._may_read(client, room_id):
+                self.read_state.mark(client.username, room_id, ts)
+            return
         if kind == "upload-ticket":
             if not client.room_id:
                 return
@@ -283,7 +307,8 @@ class Hub:
             return client.send({"type": "error", "code": err.code, "message": err.message})
 
         client.username = record["username"]
-        client.is_host = bool(record.get("host"))
+        client.is_host = self.accounts.is_host(record["username"])
+        client.is_owner = self.accounts.is_owner(record["username"])
         client.joined_at = store_mod.now_ms()
         rooms = self.rooms_with_presence()
         client.send(
@@ -292,8 +317,11 @@ class Hub:
                 "username": client.username,
                 "token": self.accounts.issue_token(client.username),
                 "isHost": client.is_host,
+                "isOwner": client.is_owner,
+                "announcement": self.announcement,
                 "rooms": rooms,
                 "gifsEnabled": self.settings.gifs_enabled,
+                "unread": self.read_state.unread_counts(client.username, self.store),
             }
         )
 
@@ -319,7 +347,20 @@ class Hub:
         if previous == room_id:
             return True
 
-        if store_mod.is_locked(room) and room_id not in client.unlocked:
+        banned = [name.lower() for name in room.get("banned", [])]
+        if client.username and client.username.lower() in banned and not client.is_owner:
+            client.send(
+                {
+                    "type": "error",
+                    "code": "banned",
+                    "roomId": room_id,
+                    "roomName": room["name"],
+                    "message": f'You have been removed from "{room["name"]}".',
+                }
+            )
+            return False
+
+        if store_mod.is_locked(room) and room_id not in client.unlocked and not client.is_owner:
             if not password:
                 if not quiet:
                     client.send(
@@ -374,6 +415,9 @@ class Hub:
                 "members": self._members_snapshot(room_id),
             }
         )
+        newest = self.store.recent_messages(room_id, 1)
+        if newest:
+            self.read_state.mark(client.username, room_id, newest[-1].get("ts", 0))
         self._announce_join(room_id, client.username)
         if previous:
             self.push_presence(previous)
@@ -485,6 +529,259 @@ class Hub:
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
         self.enter_room(client, room["id"])
 
+    # ---------- owner: the whole place ----------
+
+    def _load_announcement(self):
+        try:
+            if self.announcement_path.is_file():
+                data = json.loads(self.announcement_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict) and data.get("text"):
+                    return data
+        except (ValueError, OSError):
+            pass
+        return None
+
+    def _save_announcement(self):
+        try:
+            self.announcement_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.announcement:
+                tmp = self.announcement_path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps(self.announcement, indent=2), encoding="utf-8")
+                os.replace(tmp, self.announcement_path)
+            elif self.announcement_path.is_file():
+                self.announcement_path.unlink()
+        except OSError as err:
+            print(f"[announcement] could not save: {err}")
+
+    def _require_owner(self, client):
+        # checked on every privileged call, never trusted from the client
+        if client.is_owner and self.accounts.is_owner(client.username):
+            return True
+        client.send({"type": "error", "code": "not-owner", "message": "Only an owner can do that."})
+        return False
+
+    def _online_names(self):
+        with self.lock:
+            return [c.username for c in self.clients.values() if c.username]
+
+    def _handle_accounts(self, client):
+        if not self._require_owner(client):
+            return
+        client.send({"type": "accounts", "accounts": self.accounts.summary(self._online_names())})
+
+    def _sessions_for(self, username):
+        with self.lock:
+            return [c for c in self.clients.values() if c.username == username]
+
+    def _handle_account_action(self, client, data):
+        if not self._require_owner(client):
+            return
+        username = str(data.get("username") or "")
+        action = data.get("action")
+        target = self.accounts.get(username)
+        if not target:
+            return client.send({"type": "error", "code": "no-account", "message": "No such account."})
+        if username.lower() == client.username.lower() and action in ("delete", "set-owner"):
+            return client.send(
+                {
+                    "type": "error",
+                    "code": "not-yourself",
+                    "message": "Use another owner's account to change your own role.",
+                }
+            )
+
+        try:
+            if action == "set-host":
+                self.accounts.set_role(username, host=bool(data.get("value")))
+            elif action == "set-owner":
+                self.accounts.set_role(username, owner=bool(data.get("value")))
+            elif action == "reset-password":
+                self.accounts.set_password(username, data.get("password"))
+            elif action == "rename":
+                old, new = self.accounts.rename(username, data.get("newName"))
+                self.store.rename_user(old, new)
+                self.read_state.rename_user(old, new)
+                for session in self._sessions_for(old):
+                    session.username = new
+                    session.send(
+                        {
+                            "type": "renamed",
+                            "username": new,
+                            "token": self.accounts.issue_token(new),
+                        }
+                    )
+            elif action == "delete":
+                removed = self.accounts.delete(username)
+                self.read_state.forget_user(removed)
+                for session in self._sessions_for(removed):
+                    session.send(
+                        {
+                            "type": "signed-out",
+                            "message": "An owner removed this account.",
+                        }
+                    )
+                    session.username = None
+                    session.room_id = None
+                    session.ws.terminate()
+            else:
+                return
+        except AccountError as err:
+            return client.send({"type": "error", "code": err.code, "message": err.message})
+
+        # roles take effect on anyone already connected
+        for session in self._sessions_for(username if action != "rename" else data.get("newName")):
+            if session.username:
+                session.is_host = self.accounts.is_host(session.username)
+                session.is_owner = self.accounts.is_owner(session.username)
+                session.send(
+                    {
+                        "type": "role",
+                        "isHost": session.is_host,
+                        "isOwner": session.is_owner,
+                    }
+                )
+
+        client.send({"type": "accounts", "accounts": self.accounts.summary(self._online_names())})
+        client.send({"type": "account-done", "action": action, "username": username})
+        self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
+
+    def _handle_announce(self, client, data):
+        if not self._require_owner(client):
+            return
+        text = str(data.get("text") or "").strip()[:400]
+        if not text:
+            self.announcement = None
+            self._save_announcement()
+            return self.broadcast_all({"type": "announcement", "announcement": None})
+
+        colour = str(data.get("color") or "#dc2626")
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", colour):
+            colour = "#dc2626"
+        self.announcement = {
+            "id": uuid.uuid4().hex,
+            "text": text,
+            "color": colour,
+            "from": client.username,
+            "ts": store_mod.now_ms(),
+        }
+        self._save_announcement()
+        self.broadcast_all({"type": "announcement", "announcement": self.announcement})
+
+    # ---------- host controls ----------
+
+    def _require_host(self, client):
+        if client.is_host:
+            return True
+        client.send({"type": "error", "code": "not-host", "message": "Only a host can do that."})
+        return False
+
+    def _handle_room_settings(self, client, data):
+        if not self._require_host(client):
+            return
+        room_id = str(data.get("roomId") or client.room_id or "")
+        room = self.store.get_room(room_id)
+        if room is None:
+            return client.send({"type": "error", "code": "no-room", "message": "That room is gone."})
+
+        action = data.get("action")
+        if action == "set-password":
+            password = str(data.get("password") or "").strip()[:ROOM_PASSWORD_MAX]
+            if len(password) < ROOM_PASSWORD_MIN:
+                return client.send(
+                    {
+                        "type": "error",
+                        "code": "weak-room-password",
+                        "message": f"Room passwords need at least {ROOM_PASSWORD_MIN} characters.",
+                    }
+                )
+            with self.store.lock:
+                room["password"] = store_mod.hash_password(password)
+            self.store.save(room_id)
+            # everyone else has to type the new one
+            for other in self._everyone():
+                if other is not client:
+                    other.unlocked.discard(room_id)
+            client.unlocked.add(room_id)
+            self.system_message(room_id, f"{client.username} changed the room password.")
+
+        elif action == "open-room":
+            with self.store.lock:
+                room.pop("password", None)
+            self.store.save(room_id)
+            self.system_message(room_id, f"{client.username} removed the room password.")
+
+        elif action == "delete-room":
+            if len(self.store.list_rooms()) <= 1:
+                return client.send(
+                    {
+                        "type": "error",
+                        "code": "last-room",
+                        "message": "You cannot delete the only room.",
+                    }
+                )
+            for message in self.store.recent_messages(room_id, 100000):
+                attachment = message.get("attachment") or {}
+                if attachment.get("kind") in ("image", "file"):
+                    self.uploads.remove(attachment.get("url"))
+            self.store.delete_room(room_id)
+            fallback = self.store.list_rooms()[0]["id"]
+            for other in list(self.clients.values()):
+                if other.room_id == room_id:
+                    other.room_id = None
+                    other.unlocked.discard(room_id)
+                    self.enter_room(other, fallback, quiet=True)
+                    if other.room_id != fallback:
+                        other.send({"type": "no-room"})
+        else:
+            return
+
+        self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
+        client.send({"type": "settings-done", "roomId": room_id, "action": action})
+
+    def _handle_remove_member(self, client, data):
+        if not self._require_host(client):
+            return
+        username = str(data.get("username") or "")
+        room_id = client.room_id
+        if not room_id or not username or username == client.username:
+            return
+        ban = bool(data.get("ban"))
+        room = self.store.get_room(room_id)
+        if room is None:
+            return
+
+        if ban:
+            with self.store.lock:
+                banned = room.setdefault("banned", [])
+                if username.lower() not in [name.lower() for name in banned]:
+                    banned.append(username)
+            self.store.save(room_id)
+
+        fallback = next(
+            (r["id"] for r in self.store.list_rooms() if not r["locked"] and r["id"] != room_id),
+            None,
+        )
+        for other in list(self.clients.values()):
+            if other.room_id == room_id and other.username == username:
+                other.unlocked.discard(room_id)
+                other.room_id = None
+                other.send(
+                    {
+                        "type": "removed",
+                        "roomId": room_id,
+                        "roomName": room["name"],
+                        "banned": ban,
+                    }
+                )
+                if fallback:
+                    self.enter_room(other, fallback, quiet=True)
+                else:
+                    other.send({"type": "no-room"})
+        self.system_message(
+            room_id, f"{client.username} removed {username} from the room."
+        )
+        self.push_presence(room_id)
+
     # ---------- changing a message after the fact ----------
 
     def _own_message(self, client, message_id):
@@ -549,6 +846,8 @@ class Hub:
         room = self.store.get_room(room_id)
         if room is None:
             return False
+        if client.is_owner:
+            return True
         return not store_mod.is_locked(room) or room_id in client.unlocked
 
     def _handle_history(self, client, data):

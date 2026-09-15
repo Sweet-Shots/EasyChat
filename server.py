@@ -18,6 +18,7 @@ from easychat import httpd  # noqa: E402
 from easychat.accounts import Accounts  # noqa: E402
 from easychat.config import Settings, load_env  # noqa: E402
 from easychat.hub import Hub  # noqa: E402
+from easychat.readstate import ReadState  # noqa: E402
 from easychat.store import ChatStore  # noqa: E402
 from easychat.uploads import Uploads  # noqa: E402
 
@@ -106,7 +107,8 @@ def main():
     orphans = uploads.sweep(store.attachment_urls())
     if orphans:
         print(f"  Cleaned up {orphans} uploaded file(s) no message points at any more.")
-    hub = Hub(store, settings, accounts, uploads)
+    read_state = ReadState(settings.accounts_dir).init()
+    hub = Hub(store, settings, accounts, uploads, read_state)
 
     try:
         server = httpd.ChatServer(
@@ -132,6 +134,7 @@ def main():
         server.server_close()
         store.flush()
         accounts.save()
+        read_state.save()
         release_power()
     return 0
 
