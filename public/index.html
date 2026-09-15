@@ -90,12 +90,18 @@
       <div id="me-avatar" class="avatar avatar--sm">?</div>
       <div class="sidebar__me">
         <strong id="me-name">…</strong>
-        <span id="conn-state" class="conn conn--live">Connected</span>
+        <span class="sidebar__status">
+          <span id="conn-state" class="conn conn--live">Connected</span>
+          <span id="me-host" class="host-badge" hidden>HOST</span>
+        </span>
       </div>
-      <span id="me-host" class="host-badge" hidden>HOST</span>
       <button id="owner-open" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
               aria-label="Owner tools" title="Owner tools" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 5 6v5.5c0 4.2 2.9 8.2 7 9.5 4.1-1.3 7-5.3 7-9.5V6l-7-3Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round"/><path d="m9 12 2 2 4-4" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button id="profile-open" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
+              aria-label="Your profile and appearance" title="You and appearance">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8.5" r="3.7" stroke="currentColor" stroke-width="1.9" fill="none"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round"/></svg>
       </button>
       <button id="sign-out" class="icon-btn icon-btn--ghost icon-btn--sm sidebar__out" type="button"
               aria-label="Sign out" title="Sign out">
@@ -243,6 +249,38 @@
   </form>
 </div>
 
+<!-- ───────── You ───────── -->
+<div id="profile-modal" class="modal" hidden>
+  <div class="modal__card">
+    <h3 class="modal__title">You</h3>
+
+    <div class="profile__row">
+      <div id="profile-avatar" class="avatar avatar--xl">?</div>
+      <div class="profile__pick">
+        <button id="profile-upload" class="btn btn--ghost btn--tiny" type="button">Upload a picture</button>
+        <button id="profile-remove" class="btn btn--ghost btn--tiny btn--warn" type="button" hidden>Remove</button>
+        <input id="profile-file" type="file" accept="image/*" hidden />
+        <p class="profile__hint">A square image works best. It shows next to everything you say.</p>
+      </div>
+    </div>
+
+    <span class="field__label">Your colour</span>
+    <div id="profile-colors" class="swatches swatches--wrap"></div>
+
+    <span class="field__label">Appearance</span>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" class="seg__item" data-theme-choice="light">Light</button>
+      <button type="button" class="seg__item" data-theme-choice="dark">Dark</button>
+      <button type="button" class="seg__item" data-theme-choice="system">System</button>
+    </div>
+
+    <p id="profile-error" class="gate__error" role="alert" hidden></p>
+    <div class="modal__actions">
+      <button id="profile-close" class="btn btn--ghost" type="button">Done</button>
+    </div>
+  </div>
+</div>
+
 <!-- ───────── Owner tools ───────── -->
 <div id="owner-modal" class="modal" hidden>
   <div class="modal__card modal__card--wide owner">
@@ -314,6 +352,23 @@
   </div>
 </div>
 
+<!-- ───────── Ask ───────── -->
+<div id="ask-modal" class="modal" hidden>
+  <form id="ask-form" class="modal__card">
+    <h3 class="modal__title" id="ask-title">Change</h3>
+    <p class="modal__hint" id="ask-hint"></p>
+    <label class="field">
+      <span class="field__label" id="ask-label">Value</span>
+      <input id="ask-input" class="field__input" type="text" maxlength="128" />
+    </label>
+    <p id="ask-error" class="gate__error" role="alert" hidden></p>
+    <div class="modal__actions">
+      <button id="ask-cancel" class="btn btn--ghost" type="button">Cancel</button>
+      <button class="btn btn--primary" type="submit" id="ask-ok">Save</button>
+    </div>
+  </form>
+</div>
+
 <!-- ───────── Confirm delete ───────── -->
 <div id="confirm-modal" class="modal" hidden>
   <div class="modal__card modal__card--center">
@@ -354,6 +409,10 @@
     <p class="modal__hint">The computer hosting this chat looks like it is asleep or offline. Nothing is lost - it comes back when they do.</p>
     <button id="offline-retry" class="btn btn--primary" type="button">Try again</button>
   </div>
+</div>
+
+<div id="emoji-panel" class="emoji-panel" hidden>
+  <div id="emoji-grid" class="emoji-grid"></div>
 </div>
 
 <div id="sticky" class="sticky" hidden>

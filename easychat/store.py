@@ -188,6 +188,12 @@ class ChatStore:
                     if isinstance(reply, dict) and reply.get("user") == old:
                         reply["user"] = new
                         changed = True
+                    reactions = message.get("reactions")
+                    if isinstance(reactions, dict):
+                        for emoji, names in reactions.items():
+                            if old in names:
+                                reactions[emoji] = [new if n == old else n for n in names]
+                                changed = True
                 banned = room.get("banned")
                 if isinstance(banned, list) and old in banned:
                     room["banned"] = [new if name == old else name for name in banned]
@@ -272,11 +278,11 @@ class ChatStore:
                                 "text": text[:220],
                             }
                         )
-                        if len(hits) >= limit:
-                            hits.sort(key=lambda h: h["ts"], reverse=True)
-                            return hits, True
+                        if len(hits) >= limit * 4:
+                            break  # plenty from this room; still visit the others
+        capped = len(hits) > limit
         hits.sort(key=lambda h: h["ts"], reverse=True)
-        return hits, False
+        return hits[:limit], capped
 
     def schedule_save(self, room_id):
         """Coalesce a burst of messages into one write."""

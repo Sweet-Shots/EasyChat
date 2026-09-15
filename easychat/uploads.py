@@ -118,6 +118,7 @@ class Uploads:
         self.secret = secret
         self.max_file_bytes = max_file_mb * 1024 * 1024
         self.max_total_bytes = max_total_mb * 1024 * 1024
+        self._spent = set()
 
     def init(self):
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -129,6 +130,16 @@ class Uploads:
         body = f"{username}|{room_id}|{now_ms + TICKET_TTL_MS}"
         signature = hmac.new(self.secret, body.encode("utf-8"), "sha256").hexdigest()[:32]
         return f"{body}|{signature}"
+
+    def spend_ticket(self, ticket):
+        """A ticket is good for one upload, so a stale one cannot be replayed."""
+        with _lock:
+            if ticket in self._spent:
+                return False
+            self._spent.add(ticket)
+            if len(self._spent) > 500:
+                self._spent = set(list(self._spent)[-200:])
+            return True
 
     def check_ticket(self, ticket, now_ms):
         try:

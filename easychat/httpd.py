@@ -47,10 +47,30 @@ class ChatHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    CSP = (
+        "default-src 'self'; "
+        "img-src 'self' data: https://*.tenor.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src https://fonts.gstatic.com; "
+        "script-src 'self'; "
+        "connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'none'; "
+        "form-action 'none'"
+    )
+
+    def send_secure_headers(self):
+        """The public link should not be framable, and should leak nothing."""
+        self.send_header("Content-Security-Policy", self.CSP)
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+
     def send_bytes(self, body, content_type, etag=None):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self.send_secure_headers()
         if etag:
             self.send_header("ETag", etag)
             self.send_header("Cache-Control", "no-cache")
@@ -92,7 +112,7 @@ class ChatHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(parsed.query)
         ticket = (query.get("ticket") or [""])[0]
         seat = uploads.check_ticket(ticket, store.now_ms())
-        if not seat:
+        if not seat or not uploads.spend_ticket(ticket):
             self.close_connection = True
             return self.send_json({"error": "Upload permission expired. Try again."}, 403)
         _username, room_id = seat

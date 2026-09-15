@@ -88,6 +88,28 @@
     confirmCancel: $('confirm-cancel'),
     confirmOk: $('confirm-ok'),
 
+    profileOpen: $('profile-open'),
+    profileModal: $('profile-modal'),
+    profileAvatar: $('profile-avatar'),
+    profileUpload: $('profile-upload'),
+    profileRemove: $('profile-remove'),
+    profileFile: $('profile-file'),
+    profileColors: $('profile-colors'),
+    profileError: $('profile-error'),
+    profileClose: $('profile-close'),
+    emojiPanel: $('emoji-panel'),
+    emojiGrid: $('emoji-grid'),
+
+    askModal: $('ask-modal'),
+    askForm: $('ask-form'),
+    askTitle: $('ask-title'),
+    askHint: $('ask-hint'),
+    askLabel: $('ask-label'),
+    askInput: $('ask-input'),
+    askError: $('ask-error'),
+    askOk: $('ask-ok'),
+    askCancel: $('ask-cancel'),
+
     ownerOpen: $('owner-open'),
     ownerModal: $('owner-modal'),
     ownerClose: $('owner-close'),
@@ -171,6 +193,12 @@
     accounts: [],
     announceColor: '#dc2626',
     announcementId: '',
+    profiles: {},
+    dismissed: '',
+    theme: 'system',
+    reactTarget: null,
+    askResolve: null,
+    confirmAction: null,
     hasMore: false,
     loadingHistory: false,
     searchTimer: null,
@@ -250,14 +278,41 @@
     return hash;
   }
 
+  /* Someone's chosen colour if they have one, otherwise one derived from
+     their name so everybody still looks distinct. */
+  function colorFor(name) {
+    const chosen = state.profiles[name] && state.profiles[name].color;
+    if (chosen) return chosen;
+    const hue = hueOf(name);
+    return `hsl(${hue} 72% 48%)`;
+  }
+
+  function paintAvatar(node, name) {
+    const profile = state.profiles[name] || {};
+    node.textContent = '';
+    node.style.backgroundImage = '';
+    if (profile.avatar) {
+      node.style.background = 'var(--surface-soft)';
+      const img = document.createElement('img');
+      img.src = profile.avatar;
+      img.alt = '';
+      node.appendChild(img);
+    } else if (profile.color) {
+      node.style.background = profile.color;
+      node.textContent = name.trim().charAt(0) || '?';
+    } else {
+      const hue = hueOf(name);
+      node.style.background = `linear-gradient(135deg, hsl(${hue} 78% 62%), hsl(${(hue + 32) % 360} 72% 48%))`;
+      node.textContent = name.trim().charAt(0) || '?';
+    }
+    node.title = name;
+    return node;
+  }
+
   function avatarFor(name, size) {
     const node = document.createElement('div');
     node.className = `avatar${size ? ` avatar--${size}` : ''}`;
-    const hue = hueOf(name);
-    node.style.background = `linear-gradient(135deg, hsl(${hue} 78% 62%), hsl(${(hue + 32) % 360} 72% 48%))`;
-    node.textContent = name.trim().charAt(0) || '?';
-    node.title = name;
-    return node;
+    return paintAvatar(node, name);
   }
 
   function prettySize(bytes) {
@@ -365,7 +420,18 @@
     reply: '<path d="M9 7 4 12l5 5M4 12h8.5a6.5 6.5 0 0 1 6.5 6.5V19" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
     edit: '<path d="M4 20h4l10-10-4-4L4 16v4ZM14.5 5.5l4 4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
     trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v6M13.5 10.5v6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    react:
+      '<circle cx="12" cy="12" r="8.5" stroke="currentColor" stroke-width="1.9" fill="none"/>' +
+      '<path d="M8.7 14.2a4 4 0 0 0 6.6 0" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round"/>' +
+      '<circle cx="9.3" cy="10" r="1.05" fill="currentColor"/><circle cx="14.7" cy="10" r="1.05" fill="currentColor"/>',
   };
+
+  /* Reactions are the one place emoji belong: they are the content, not chrome. */
+  const REACTIONS = [
+    '👍', '❤️', '😂', '🎉', '👀', '🔥', '✅', '🙏',
+    '😮', '😢', '😅', '💯', '🤔', '👏', '🚀', '💡',
+    '😍', '🤝', '⚡', '☕', '🍕', '🐛', '📌', '❓',
+  ];
 
   /* ---------- one message ---------- */
 
@@ -482,9 +548,30 @@
     return quote;
   }
 
+  function buildReactions(message) {
+    const reactions = message.reactions;
+    if (!reactions || !Object.keys(reactions).length || message.deleted) return null;
+    const row = document.createElement('div');
+    row.className = 'reacts';
+    for (const [emoji, names] of Object.entries(reactions)) {
+      if (!names.length) continue;
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = `react${names.includes(state.me) ? ' react--mine' : ''}`;
+      chip.title = names.join(', ');
+      chip.innerHTML = `<span class="react__emoji">${EasyMarkdown.escapeHtml(emoji)}</span><span class="react__count">${names.length}</span>`;
+      chip.addEventListener('click', () => send({ type: 'react', id: message.id, emoji }));
+      row.appendChild(chip);
+    }
+    return row.children.length ? row : null;
+  }
+
   function buildActions(message, mine) {
     const bar = document.createElement('div');
     bar.className = 'row__actions';
+    bar.appendChild(
+      iconButton('React', ICON.react, (event) => openEmojiPicker(message, event.currentTarget))
+    );
     bar.appendChild(iconButton('Reply', ICON.reply, () => startReply(message)));
     const fresh = Date.now() - message.ts < 15 * 60 * 1000;
     if (mine && fresh && !message.attachment) {
@@ -528,6 +615,7 @@
       const author = document.createElement('span');
       author.className = 'row__author';
       author.textContent = mine ? 'You' : message.user;
+      if (!mine) author.style.color = colorFor(message.user);
       const time = document.createElement('span');
       time.className = 'row__time';
       time.textContent = timeOf(message.ts);
@@ -537,6 +625,8 @@
 
     if (message.replyTo) body.appendChild(buildReplyQuote(message));
     body.appendChild(buildBubble(message, mine));
+    const reactions = buildReactions(message);
+    if (reactions) body.appendChild(reactions);
     if (!message.deleted) body.appendChild(buildActions(message, mine));
 
     row.appendChild(body);
@@ -619,7 +709,17 @@
     if (!row) return;
     const mine = updated.user === state.me;
     const body = row.querySelector('.row__body');
-    body.querySelector('.bubble').replaceWith(buildBubble(updated, mine));
+    const bubble = buildBubble(updated, mine);
+    // the bubble is missing while this message is open in the inline editor
+    const current = body.querySelector('.bubble') || body.querySelector('.edit-box');
+    if (current) current.replaceWith(bubble);
+    else body.appendChild(bubble);
+
+    const oldReacts = body.querySelector('.reacts');
+    if (oldReacts) oldReacts.remove();
+    const reacts = buildReactions(updated);
+    if (reacts) bubble.after(reacts);
+
     const actions = body.querySelector('.row__actions');
     if (actions) actions.remove();
     if (!updated.deleted) body.appendChild(buildActions(updated, mine));
@@ -688,11 +788,14 @@
         finish(false);
       }
     });
-    area.addEventListener('blur', () => finish(true));
+    // clicking away cancels; Enter is how you commit
+    area.addEventListener('blur', () => finish(false));
   }
 
   function confirmDelete(message) {
     state.pendingDelete = message.id;
+    state.confirmAction = null;
+    el.confirmOk.textContent = 'Delete';
     el.confirmText.textContent =
       message.user === state.me
         ? 'Delete this message? The text is removed for everyone.'
@@ -846,6 +949,14 @@
     });
   }
 
+  /* A profile change repaints every face on screen without a reload. */
+  function repaintPeople() {
+    if (state.messages.length) renderAll();
+    renderMembers(state.members || []);
+    paintAvatar(el.meAvatar, state.me);
+    if (!el.profileModal.hidden) renderProfileDialog();
+  }
+
   function updateTitle() {
     let total = 0;
     for (const count of state.unread.values()) total += count;
@@ -931,7 +1042,9 @@
 
   function mentionsMe(text) {
     if (!text || !state.me) return false;
-    return new RegExp(`(^|\\s)@${state.me.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\b`, 'i').test(text);
+    const safe = state.me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // not \b: a name may end in '.' or '-', where a word boundary never fires
+    return new RegExp(`(^|\\s)@${safe}(?!\\w)`, 'i').test(text);
   }
 
   function clearUnreadForRoom() {
@@ -1058,6 +1171,7 @@
         state.isHost = Boolean(data.isHost);
         state.gifsEnabled = Boolean(data.gifsEnabled);
         state.rooms = data.rooms || [];
+        state.profiles = data.profiles || {};
         if (data.unread) {
           state.unread = new Map(Object.entries(data.unread).filter(([, count]) => count > 0));
         }
@@ -1163,6 +1277,17 @@
           state.ticketWaiter = null;
           resolve(data.ticket);
         }
+        break;
+
+      case 'profiles':
+        state.profiles = data.profiles || {};
+        repaintPeople();
+        break;
+
+      case 'profile-saved':
+        el.profileError.hidden = true;
+        renderProfileDialog();
+        toast('Saved.');
         break;
 
       case 'accounts':
@@ -1310,9 +1435,7 @@
   function enterApp() {
     state.joined = true;
     el.meName.textContent = state.me;
-    const hue = hueOf(state.me);
-    el.meAvatar.style.background = `linear-gradient(135deg, hsl(${hue} 78% 62%), hsl(${(hue + 32) % 360} 72% 48%))`;
-    el.meAvatar.textContent = state.me.charAt(0);
+    paintAvatar(el.meAvatar, state.me);
     el.gate.classList.add('gate--leaving');
     setTimeout(() => {
       el.gate.hidden = true;
@@ -1505,10 +1628,10 @@
 
   /* ---------- images and files ---------- */
 
-  function ticketFor() {
+  function ticketFor(forAvatar) {
     return new Promise((resolve) => {
       state.ticketWaiter = resolve;
-      if (!send({ type: 'upload-ticket' })) resolve(null);
+      if (!send({ type: 'upload-ticket', avatar: Boolean(forAvatar) })) resolve(null);
       setTimeout(() => {
         if (state.ticketWaiter === resolve) {
           state.ticketWaiter = null;
@@ -1563,13 +1686,14 @@
     if (!state.roomId) return toast('Pick a room first.', 'error');
     const list = [...files].slice(0, 6);
     if (!list.length) return;
-    const ticket = await ticketFor();
-    if (!ticket) return toast('Could not start the upload. Try again.', 'error');
 
     state.uploading += list.length;
     refreshSendState();
     for (const file of list) {
-      const done = await uploadOne(file, ticket);
+      // one ticket per file: they are single use on the server
+      const ticket = await ticketFor();
+      const done = ticket ? await uploadOne(file, ticket) : null;
+      if (!ticket) toast('Could not start the upload. Try again.', 'error');
       state.uploading -= 1;
       if (done) {
         state.pendingFiles.push(done);
@@ -1766,6 +1890,7 @@
 
   el.confirmCancel.addEventListener('click', () => {
     state.pendingDelete = '';
+    state.confirmAction = null;
     closeDialog(el.confirmModal);
   });
   el.confirmModal.addEventListener('click', (event) => {
@@ -1775,7 +1900,11 @@
     }
   });
   el.confirmOk.addEventListener('click', () => {
-    if (state.pendingRoomDelete) {
+    if (state.confirmAction) {
+      const action = state.confirmAction;
+      state.confirmAction = null;
+      action();
+    } else if (state.pendingRoomDelete) {
       send({ type: 'room-settings', roomId: state.pendingRoomDelete, action: 'delete-room' });
     } else if (state.pendingDelete) {
       send({ type: 'delete', id: state.pendingDelete });
@@ -1921,18 +2050,210 @@ ${rows}
     toast('Saved to your downloads.');
   }
 
+  /* ---------- asking for a value, in our own dialog ---------- */
+
+  function ask({ title, hint, label, value = '', password = false, ok = 'Save' }) {
+    return new Promise((resolve) => {
+      el.askTitle.textContent = title;
+      el.askHint.textContent = hint || '';
+      el.askHint.hidden = !hint;
+      el.askLabel.textContent = label;
+      el.askInput.type = password ? 'password' : 'text';
+      el.askInput.value = value;
+      el.askOk.textContent = ok;
+      el.askError.hidden = true;
+      state.askResolve = resolve;
+      openDialog(el.askModal, el.askInput);
+      setTimeout(() => el.askInput.select(), 80);
+    });
+  }
+
+  function closeAsk(answer) {
+    const resolve = state.askResolve;
+    state.askResolve = null;
+    if (!el.askModal.hidden) closeDialog(el.askModal);
+    if (resolve) resolve(answer);
+  }
+
+  el.askForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    closeAsk(el.askInput.value.trim());
+  });
+  el.askCancel.addEventListener('click', () => closeAsk(null));
+  el.askModal.addEventListener('click', (event) => {
+    if (event.target === el.askModal) closeAsk(null);
+  });
+
+  function confirmThat(text, onYes, danger = 'Delete') {
+    el.confirmText.textContent = text;
+    el.confirmOk.textContent = danger;
+    state.confirmAction = onYes;
+    openDialog(el.confirmModal, el.confirmCancel);
+  }
+
+  /* ---------- the emoji picker ---------- */
+
+  function buildEmojiGrid() {
+    el.emojiGrid.textContent = '';
+    for (const emoji of REACTIONS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'emoji';
+      button.textContent = emoji;
+      button.setAttribute('aria-label', `React with ${emoji}`);
+      button.addEventListener('click', () => {
+        if (state.reactTarget) send({ type: 'react', id: state.reactTarget, emoji });
+        closeEmojiPicker();
+      });
+      el.emojiGrid.appendChild(button);
+    }
+  }
+
+  function openEmojiPicker(message, anchor) {
+    state.reactTarget = message.id;
+    el.emojiPanel.hidden = false;
+    const box = anchor.getBoundingClientRect();
+    const width = 268;
+    const left = Math.min(Math.max(12, box.left - width / 2), window.innerWidth - width - 12);
+    const above = box.top > 260;
+    el.emojiPanel.style.left = `${left}px`;
+    el.emojiPanel.style.top = above ? `${box.top - 232}px` : `${box.bottom + 8}px`;
+    el.emojiPanel.querySelector('.emoji')?.focus();
+  }
+
+  function closeEmojiPicker() {
+    el.emojiPanel.hidden = true;
+    state.reactTarget = null;
+  }
+
+  document.addEventListener('click', (event) => {
+    if (el.emojiPanel.hidden) return;
+    if (el.emojiPanel.contains(event.target) || event.target.closest('.act')) return;
+    closeEmojiPicker();
+  });
+
+  /* ---------- you: picture, colour, theme ---------- */
+
+  const NAME_COLORS = [
+    '#2563eb', '#0ea5e9', '#0d9488', '#16a34a', '#65a30d', '#ca8a04',
+    '#ea580c', '#dc2626', '#db2777', '#9333ea', '#6366f1', '#475569',
+  ];
+
+  function applyTheme(theme) {
+    state.theme = theme;
+    const root = document.documentElement;
+    if (theme === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', theme);
+    try {
+      localStorage.setItem('easychat.theme', theme);
+    } catch {
+      /* the choice just does not outlive the tab */
+    }
+    for (const button of document.querySelectorAll('[data-theme-choice]')) {
+      button.classList.toggle('seg__item--on', button.dataset.themeChoice === theme);
+    }
+    const dark =
+      theme === 'dark' ||
+      (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute(
+      'content',
+      dark ? '#0e1524' : '#2563eb'
+    );
+  }
+
+  function loadTheme() {
+    let saved = 'system';
+    try {
+      saved = localStorage.getItem('easychat.theme') || 'system';
+    } catch {
+      saved = 'system';
+    }
+    applyTheme(['light', 'dark', 'system'].includes(saved) ? saved : 'system');
+  }
+
+  for (const button of document.querySelectorAll('[data-theme-choice]')) {
+    button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
+  }
+
+  function myProfile() {
+    return state.profiles[state.me] || {};
+  }
+
+  function renderProfileDialog() {
+    paintAvatar(el.profileAvatar, state.me);
+    el.profileRemove.hidden = !myProfile().avatar;
+    el.profileColors.textContent = '';
+    const mine = myProfile().color || '';
+    for (const colour of NAME_COLORS) {
+      const swatch = document.createElement('button');
+      swatch.type = 'button';
+      swatch.className = `swatch${colour === mine ? ' swatch--on' : ''}`;
+      swatch.style.background = colour;
+      swatch.setAttribute('aria-label', `Use ${colour}`);
+      swatch.addEventListener('click', () => send({ type: 'profile', color: colour }));
+      el.profileColors.appendChild(swatch);
+    }
+    const auto = document.createElement('button');
+    auto.type = 'button';
+    auto.className = `swatch swatch--auto${mine ? '' : ' swatch--on'}`;
+    auto.setAttribute('aria-label', 'Back to the automatic colour');
+    auto.addEventListener('click', () => send({ type: 'profile', color: '' }));
+    el.profileColors.appendChild(auto);
+  }
+
+  el.profileOpen.addEventListener('click', () => {
+    el.profileError.hidden = true;
+    renderProfileDialog();
+    openDialog(el.profileModal, el.profileUpload);
+  });
+  el.profileClose.addEventListener('click', () => closeDialog(el.profileModal));
+  el.profileModal.addEventListener('click', (event) => {
+    if (event.target === el.profileModal) closeDialog(el.profileModal);
+  });
+
+  el.profileUpload.addEventListener('click', () => el.profileFile.click());
+  el.profileRemove.addEventListener('click', () => send({ type: 'profile', avatar: '' }));
+  el.profileFile.addEventListener('change', async () => {
+    const file = el.profileFile.files[0];
+    el.profileFile.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      el.profileError.textContent = 'Profile pictures have to be an image.';
+      el.profileError.hidden = false;
+      return;
+    }
+    el.profileError.hidden = true;
+    el.profileUpload.disabled = true;
+    el.profileUpload.textContent = 'Uploading…';
+    const ticket = await ticketFor(true);
+    const done = ticket ? await uploadOne(file, ticket) : null;
+    el.profileUpload.disabled = false;
+    el.profileUpload.textContent = 'Upload a picture';
+    if (done) send({ type: 'profile', avatar: done.attachment.url });
+  });
+
   /* ---------- owner tools ---------- */
 
   const ANNOUNCE_COLORS = ['#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#2563eb', '#7c3aed'];
 
+  function dismissedAnnouncement() {
+    try {
+      return localStorage.getItem('easychat.dismissed') || '';
+    } catch {
+      return '';
+    }
+  }
+
   function showAnnouncement(announcement) {
     if (!announcement || !announcement.text) {
       el.sticky.hidden = true;
+      document.body.classList.remove('has-sticky');
       state.announcementId = '';
       return;
     }
-    if (state.dismissed === announcement.id) return;
+    if (state.dismissed === announcement.id || dismissedAnnouncement() === announcement.id) return;
     state.announcementId = announcement.id;
+    document.body.classList.add('has-sticky');
     el.sticky.style.setProperty('--sticky', announcement.color || '#dc2626');
     el.stickyFrom.textContent = `${announcement.from}`;
     el.stickyText.textContent = announcement.text;
@@ -1941,7 +2262,13 @@ ${rows}
 
   el.stickyClose.addEventListener('click', () => {
     state.dismissed = state.announcementId;
+    try {
+      localStorage.setItem('easychat.dismissed', state.announcementId);
+    } catch {
+      /* it just comes back next reload */
+    }
     el.sticky.hidden = true;
+    document.body.classList.remove('has-sticky');
   });
 
   function ownerTab(which) {
@@ -2031,23 +2358,37 @@ ${rows}
           send({ type: 'account-action', action: 'set-owner', username: account.username, value: !account.owner })
         );
       }
-      act('Reset password', () => {
-        const password = prompt(`New password for ${account.username} (at least 6 characters):`);
+      act('Reset password', async () => {
+        const password = await ask({
+          title: `New password for ${account.username}`,
+          hint: 'They will need this to sign in. Tell them yourself - EasyChat cannot.',
+          label: 'New password',
+          password: true,
+          ok: 'Set password',
+        });
         if (password) {
           send({ type: 'account-action', action: 'reset-password', username: account.username, password });
         }
       });
-      act('Rename', () => {
-        const newName = prompt(`Rename ${account.username} to:`, account.username);
+      act('Rename', async () => {
+        const newName = await ask({
+          title: `Rename ${account.username}`,
+          hint: 'Their old messages follow the new name, and they stay signed in.',
+          label: 'New username',
+          value: account.username,
+          ok: 'Rename',
+        });
         if (newName && newName !== account.username) {
           send({ type: 'account-action', action: 'rename', username: account.username, newName });
         }
       });
       if (!me) {
         act('Delete', () => {
-          if (confirm(`Delete the account "${account.username}"? Their messages stay, their sign-in goes.`)) {
-            send({ type: 'account-action', action: 'delete', username: account.username });
-          }
+          confirmThat(
+            `Delete the account "${account.username}"? Their messages stay; their sign-in goes.`,
+            () => send({ type: 'account-action', action: 'delete', username: account.username }),
+            'Delete account'
+          );
         }, true);
       }
 
@@ -2163,6 +2504,8 @@ ${rows}
     state.pendingDelete = '';
     el.confirmText.textContent = `Delete #${el.roomName.textContent} and everything in it? This cannot be undone.`;
     state.pendingRoomDelete = state.roomId;
+    state.confirmAction = null;
+    el.confirmOk.textContent = 'Delete room';
     closeDialog(el.settingsModal);
     openDialog(el.confirmModal, el.confirmCancel);
   });
@@ -2235,7 +2578,7 @@ ${rows}
       return openSearch();
     }
     if (event.key === 'Tab') {
-      const dialog = [el.roomModal, el.unlockModal, el.searchModal, el.confirmModal].find(
+      const dialog = [el.roomModal, el.unlockModal, el.searchModal, el.confirmModal, el.askModal, el.profileModal].find(
         (node) => !node.hidden
       );
       if (!dialog) return;
@@ -2254,9 +2597,11 @@ ${rows}
     }
     if (event.key === 'Escape') {
       closeGifPanel();
+      closeEmojiPicker();
       closeSidebar();
       closeUnlock();
       closeSearch();
+      if (!el.askModal.hidden) closeAsk(null);
       if (!el.confirmModal.hidden) {
         state.pendingDelete = '';
         closeDialog(el.confirmModal);
@@ -2311,7 +2656,9 @@ ${rows}
     /* ignore */
   }
 
+  loadTheme();
   buildSwatches();
+  buildEmojiGrid();
   loadToken();
   loadRoomKeys();
   if (state.token) gateBusy(true, 'Signing you in…');

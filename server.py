@@ -93,7 +93,9 @@ def main():
         print(f"Cannot find the web files at {settings.public_dir}")
         return 1
 
-    accounts = Accounts(settings.accounts_dir, settings.room_password, settings.host_names).init()
+    accounts = Accounts(
+        settings.accounts_dir, settings.room_password, settings.host_names, settings.owner_names
+    ).init()
     uploads = Uploads(
         settings.files_dir, accounts.secret, settings.max_upload_mb, settings.max_storage_mb
     ).init()
@@ -104,7 +106,10 @@ def main():
             uploads.remove(attachment.get("url"))
 
     store = ChatStore(settings.chats_dir, settings.max_messages, on_trim=drop_file).init()
-    orphans = uploads.sweep(store.attachment_urls())
+    in_use = store.attachment_urls() + [
+        profile["avatar"] for profile in accounts.profiles().values() if profile.get("avatar")
+    ]
+    orphans = uploads.sweep(in_use)
     if orphans:
         print(f"  Cleaned up {orphans} uploaded file(s) no message points at any more.")
     read_state = ReadState(settings.accounts_dir).init()

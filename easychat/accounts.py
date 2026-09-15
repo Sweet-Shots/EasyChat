@@ -181,6 +181,8 @@ class Accounts:
                     "createdAt": r.get("createdAt", 0),
                     "lastSeen": r.get("lastSeen", 0),
                     "online": r["username"].lower() in online,
+                    "color": r.get("color", ""),
+                    "avatar": r.get("avatar", ""),
                 }
                 for r in records
             ]
@@ -200,6 +202,37 @@ class Accounts:
                 record["host"] = bool(host)
         self.save()
         return record
+
+    def set_profile(self, username, *, color=None, avatar=None):
+        """What someone looks like to everyone else."""
+        record = self.get(username)
+        if not record:
+            raise AccountError("no-account", "There is no such account.")
+        with self.lock:
+            if color is not None:
+                colour = str(color).strip()
+                if colour and not re.fullmatch(r"#[0-9a-fA-F]{6}", colour):
+                    raise AccountError("bad-color", "That is not a colour I understand.")
+                if colour:
+                    record["color"] = colour
+                else:
+                    record.pop("color", None)
+            if avatar is not None:
+                if avatar:
+                    record["avatar"] = str(avatar)[:300]
+                else:
+                    record.pop("avatar", None)
+        self.save()
+        return record
+
+    def profiles(self):
+        """username -> {color, avatar}, for everyone the room might show."""
+        with self.lock:
+            return {
+                r["username"]: {"color": r.get("color", ""), "avatar": r.get("avatar", "")}
+                for r in self.users.values()
+                if r.get("color") or r.get("avatar")
+            }
 
     def set_password(self, username, new_password):
         record = self.get(username)

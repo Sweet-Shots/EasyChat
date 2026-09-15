@@ -8,6 +8,7 @@ import time
 import uuid
 
 from . import store as store_mod
+from . import uploads as uploads_mod
 from .accounts import AccountError
 
 MAX_TEXT_LENGTH = 4000
@@ -25,6 +26,7 @@ SIGN_IN_ATTEMPT_WINDOW = 60
 EDIT_WINDOW_MS = 15 * 60 * 1000
 HISTORY_PAGE = 100
 SEARCH_MIN = 2
+MAX_REACTIONS_PER_MESSAGE = 12
 
 USERNAME_RE = re.compile(r"^[\w .\-]{2,24}$", re.UNICODE)
 TENOR_URL_RE = re.compile(r"^https://media\d*\.tenor\.com/")
@@ -234,6 +236,10 @@ class Hub:
             return self._handle_history(client, data)
         if kind == "search":
             return self._handle_search(client, data)
+        if kind == "react":
+            return self._handle_react(client, data)
+        if kind == "profile":
+            return self._handle_profile(client, data)
         if kind == "accounts":
             return self._handle_accounts(client)
         if kind == "account-action":
@@ -254,14 +260,13 @@ class Hub:
                 self.read_state.mark(client.username, room_id, ts)
             return
         if kind == "upload-ticket":
-            if not client.room_id:
+            target = "avatars" if data.get("avatar") else client.room_id
+            if not target:
                 return
             return client.send(
                 {
                     "type": "upload-ticket",
-                    "ticket": self.uploads.mint_ticket(
-                        client.username, client.room_id, store_mod.now_ms()
-                    ),
+                    "ticket": self.uploads.mint_ticket(client.username, target, store_mod.now_ms()),
                     "maxMb": self.settings.max_upload_mb,
                 }
             )
@@ -322,6 +327,7 @@ class Hub:
                 "rooms": rooms,
                 "gifsEnabled": self.settings.gifs_enabled,
                 "unread": self.read_state.unread_counts(client.username, self.store),
+                "profiles": self.accounts.profiles(),
             }
         )
 
@@ -529,6 +535,44 @@ class Hub:
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
         self.enter_room(client, room["id"])
 
+    # ---------- what you look like to everyone else ----------
+
+    def _handle_profile(self, client, data):
+        colour = data.get("color")
+        avatar = data.get("avatar")
+        if avatar:
+            # only a file this server stored, and only from the avatars folder
+            if not isinstance(avatar, str) or not avatar.startswith("/files/avatars/"):
+                return client.send(
+                    {"type": "error", "code": "bad-avatar", "message": "That picture could not be used."}
+                )
+            stored = self.uploads.resolve(avatar[len("/files/") :])
+            if not stored:
+                return client.send(
+                    {"type": "error", "code": "bad-avatar", "message": "That picture is no longer there."}
+                )
+            with open(stored, "rb") as handle:
+                if not uploads_mod.sniff(handle.read(32))[2]:
+                    self.uploads.remove(avatar)
+                    return client.send(
+                        {
+                            "type": "error",
+                            "code": "bad-avatar",
+                            "message": "Profile pictures have to be an image.",
+                        }
+                    )
+
+        previous = (self.accounts.get(client.username) or {}).get("avatar", "")
+        try:
+            self.accounts.set_profile(client.username, color=colour, avatar=avatar)
+        except AccountError as err:
+            return client.send({"type": "error", "code": err.code, "message": err.message})
+
+        if previous and previous != avatar:
+            self.uploads.remove(previous)  # one picture per person, no orphans
+        self.broadcast_all({"type": "profiles", "profiles": self.accounts.profiles()})
+        client.send({"type": "profile-saved"})
+
     # ---------- owner: the whole place ----------
 
     def _load_announcement(self):
@@ -570,8 +614,9 @@ class Hub:
         client.send({"type": "accounts", "accounts": self.accounts.summary(self._online_names())})
 
     def _sessions_for(self, username):
+        wanted = str(username or "").lower()
         with self.lock:
-            return [c for c in self.clients.values() if c.username == username]
+            return [c for c in self.clients.values() if (c.username or "").lower() == wanted]
 
     def _handle_account_action(self, client, data):
         if not self._require_owner(client):
@@ -840,14 +885,51 @@ class Hub:
         self.store.schedule_save(client.room_id)
         self.broadcast(client.room_id, {"type": "message-update", "roomId": client.room_id, "message": message})
 
+    def _handle_react(self, client, data):
+        if not client.room_id:
+            return
+        emoji = str(data.get("emoji") or "")[:16]
+        # one grapheme-ish: enough to stop someone stuffing a paragraph in here
+        if not emoji.strip() or len(emoji) > 16:
+            return
+        message = self.store.find_message(client.room_id, str(data.get("id") or ""))
+        if not message or message.get("type") != "chat" or message.get("deleted"):
+            return
+
+        with self.store.lock:
+            reactions = message.setdefault("reactions", {})
+            who = reactions.get(emoji, [])
+            if client.username in who:
+                who = [name for name in who if name != client.username]
+            elif len(reactions) >= MAX_REACTIONS_PER_MESSAGE and emoji not in reactions:
+                return  # a message does not need more kinds than this
+            else:
+                who = who + [client.username]
+            if who:
+                reactions[emoji] = who
+            else:
+                reactions.pop(emoji, None)
+            if not reactions:
+                message.pop("reactions", None)
+
+        self.store.schedule_save(client.room_id)
+        self.broadcast(
+            client.room_id, {"type": "message-update", "roomId": client.room_id, "message": message}
+        )
+
     # ---------- older history, and finding things in it ----------
 
     def _may_read(self, client, room_id):
+        """The one place that decides what a connection may see."""
         room = self.store.get_room(room_id)
         if room is None:
             return False
         if client.is_owner:
             return True
+        # a ban has to hold for history and search too, not just the door
+        banned = [name.lower() for name in room.get("banned", [])]
+        if client.username and client.username.lower() in banned:
+            return False
         return not store_mod.is_locked(room) or room_id in client.unlocked
 
     def _handle_history(self, client, data):

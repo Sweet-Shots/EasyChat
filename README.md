@@ -8,6 +8,7 @@ folder on the host machine — nothing is stored anywhere else.
 - Blue-and-white interface with iMessage-style bubbles and a Discord-style room list
 - Real accounts: your username is yours, and you stay signed in across restarts
 - Owner tools: manage every account, walk into any room, post announcements
+- Emoji reactions, dark mode, profile pictures and a colour for your name
 - Every room has its own password, chosen when the room is made
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
@@ -101,6 +102,23 @@ The key stays on the host. Browsers ask *your* server for GIFs and your server
 asks Tenor, so the key is never sent to anyone in the room.
 
 ---
+
+## Making it yours
+
+The person button next to your name opens **You**:
+
+- **A profile picture.** Upload one and it replaces your initial everywhere —
+  next to your messages, in the member list, in the sidebar. Images only,
+  checked by reading the file's bytes rather than trusting its name.
+- **Your colour.** Pick one and your name appears in it for everyone. Leave it
+  on automatic and a colour is derived from your name, so people still look
+  distinct.
+- **Light, dark, or follow the device.** Dark mode keeps the same blue but on a
+  deep navy ground. The choice is remembered per browser.
+
+**Reactions** live on the hover bar next to reply. Emoji are deliberate there —
+a reaction *is* the emoji, unlike the interface itself, which stays line art.
+Click a chip to add or take back your own; hover it to see who reacted.
 
 ## Accounts
 
@@ -271,6 +289,9 @@ All of these live in `.env`:
 | `INVITE_CODE` | _empty_ | Required to create an account. Empty means anyone with the link can register |
 | `HOST_USERS` | _empty_ | Extra usernames with host powers, comma separated |
 | `OWNER_USERS` | _empty_ | Extra usernames with owner powers, comma separated |
+
+`HOST_USERS` and `OWNER_USERS` apply when an account is *created*. To change
+someone who already registered, use the owner tools.
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
 | `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |
