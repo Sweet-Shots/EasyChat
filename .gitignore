@@ -1,0 +1,5 @@
+node_modules/
+.env
+EasyChat Chats/
+*.log
+.DS_Store
