@@ -120,6 +120,36 @@ The person button next to your name opens **You**:
 a reaction *is* the emoji, unlike the interface itself, which stays line art.
 Click a chip to add or take back your own; hover it to see who reacted.
 
+## Commands
+
+Type `/` in the message box and a list appears; arrow keys move, Tab completes,
+Enter sends. None of these call anything outside your machine.
+
+| Command | What it does |
+| --- | --- |
+| `/help` | List the commands you can use. Only you see the answer |
+| `/roll [2d6]` | Roll dice — `/roll`, `/roll d20`, `/roll 3d10` |
+| `/flip` | Flip a coin |
+| `/pick tea \| coffee` | Pick one at random |
+| `/8ball <question>` | Ask the magic eight ball |
+| `/me <action>` | "riley puts the kettle on" |
+| `/shrug`, `/tableflip`, `/unflip` | Append the classic to your message |
+| `/who` | Who is in this room right now |
+| `/away [note]`, `/back` | Show yourself as away. Sending a message clears it |
+
+Hosts get four more, which used to mean stopping the chat and editing JSON:
+
+| Command | What it does |
+| --- | --- |
+| `/topic <text>` | Set this room's topic |
+| `/rename <name>` | Rename this room (the file on disk keeps its name) |
+| `/bans` | Who has been removed from this room |
+| `/unban <name>` | Let someone back in |
+
+Answers marked *only you can see this* are never stored — they are not in the
+room's JSON and nobody else receives them. To send a message that really does
+start with a slash, type two: `//roll` posts "/roll".
+
 ## Accounts
 
 The first person to open EasyChat creates an account, and **that first account

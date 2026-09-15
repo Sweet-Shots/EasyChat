@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 
+from . import commands as commands_mod
 from . import store as store_mod
 from . import uploads as uploads_mod
 from .accounts import AccountError
@@ -44,6 +45,7 @@ class Client:
         self.unlocked = set()  # rooms this connection has given the password for
         self.unlock_fails = []
         self.sign_in_fails = []
+        self.status = ""
         self.is_host = False
 
     def send(self, payload):
@@ -93,7 +95,11 @@ class Hub:
             seen = {}
             for client in self.clients.values():
                 if client.room_id == room_id and client.username and client.username not in seen:
-                    seen[client.username] = {"username": client.username, "since": client.joined_at}
+                    seen[client.username] = {
+                        "username": client.username,
+                        "since": client.joined_at,
+                        "status": client.status,
+                    }
         return sorted(seen.values(), key=lambda member: member["username"].lower())
 
     def _targets(self, room_id, exclude=None):
@@ -328,6 +334,7 @@ class Hub:
                 "gifsEnabled": self.settings.gifs_enabled,
                 "unread": self.read_state.unread_counts(client.username, self.store),
                 "profiles": self.accounts.profiles(),
+                "commands": commands_mod.listing(client.is_host),
             }
         )
 
@@ -443,6 +450,61 @@ class Hub:
         client.stamps.append(now)
         return False
 
+    def _run_command(self, client, name, args):
+        """Slash commands never touch the network - see easychat/commands.py."""
+        room = self.store.get_room(client.room_id) or {}
+
+        def set_status(value):
+            client.status = value
+            self.push_presence(client.room_id)
+
+        def set_topic(topic):
+            self.store.set_topic(client.room_id, topic)
+            self.broadcast(
+                client.room_id,
+                {
+                    "type": "room-meta",
+                    "roomId": client.room_id,
+                    "name": room.get("name", ""),
+                    "topic": topic,
+                },
+            )
+            self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
+
+        def rename_room(name):
+            problem = self.store.rename_room(client.room_id, name)
+            if problem:
+                return problem
+            self.broadcast(
+                client.room_id,
+                {
+                    "type": "room-meta",
+                    "roomId": client.room_id,
+                    "name": name,
+                    "topic": room.get("topic", ""),
+                },
+            )
+            self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
+            return None
+
+        def unban(username):
+            done = self.store.unban(client.room_id, username)
+            if done:
+                self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
+            return done
+
+        context = {
+            "username": client.username,
+            "is_host": client.is_host,
+            "members": [m["username"] for m in self._members_snapshot(client.room_id)],
+            "banned": list(room.get("banned") or []),
+            "set_status": set_status,
+            "set_topic": set_topic,
+            "rename_room": rename_room,
+            "unban": unban,
+        }
+        return commands_mod.run(name, args, context)
+
     def _handle_message(self, client, data):
         if not client.room_id:
             return
@@ -450,6 +512,24 @@ class Hub:
             return client.send({"type": "error", "code": "rate-limit", "message": "Slow down a moment."})
 
         text = str(data.get("text") or "")[:MAX_TEXT_LENGTH].strip()
+
+        name, rest = commands_mod.split(text)
+        if name and not data.get("gif") and not data.get("attachment"):
+            result = self._run_command(client, name, rest)
+            kind = result["kind"]
+            if kind == "error":
+                return client.send({"type": "error", "code": "command", "message": result["text"]})
+            if kind == "notice":
+                return client.send({"type": "notice", "text": result["text"]})
+            if kind == "system":
+                return self.system_message(client.room_id, result["text"])
+            text = result["text"]
+            if kind == "emote":
+                data = dict(data, emote=True)
+            if not text:
+                return
+        elif text.startswith("//"):
+            text = text[1:]  # // escapes a literal leading slash
         attachment = None
         gif = data.get("gif")
         if isinstance(gif, dict) and isinstance(gif.get("url"), str) and TENOR_URL_RE.match(gif["url"]):
@@ -508,6 +588,11 @@ class Hub:
             "replyTo": reply_to,
             "ts": store_mod.now_ms(),
         }
+        if data.get("emote"):
+            message["emote"] = True
+        if client.status:
+            client.status = ""
+            self.push_presence(client.room_id)
         self.store.add_message(client.room_id, message)
         self.set_typing(client, False)
         self.broadcast(client.room_id, {"type": "message", "roomId": client.room_id, "message": message})
@@ -683,6 +768,7 @@ class Hub:
                         "type": "role",
                         "isHost": session.is_host,
                         "isOwner": session.is_owner,
+                        "commands": commands_mod.listing(session.is_host),
                     }
                 )
 

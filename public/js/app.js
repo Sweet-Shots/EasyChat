@@ -78,6 +78,7 @@
     unlockError: $('unlock-error'),
     unlockCancel: $('unlock-cancel'),
 
+    cmdMenu: $('cmd-menu'),
     replyBar: $('reply-bar'),
     replyBarWho: $('reply-bar-who'),
     replyBarText: $('reply-bar-text'),
@@ -195,6 +196,9 @@
     announcementId: '',
     profiles: {},
     dismissed: '',
+    commands: [],
+    cmdIndex: 0,
+    cmdMatches: [],
     theme: 'system',
     reactTarget: null,
     askResolve: null,
@@ -584,6 +588,7 @@
   }
 
   function buildRow(message, previous) {
+    if (message.emote && !message.deleted) return buildEmote(message);
     const mine = message.user === state.me;
     const stacked =
       previous &&
@@ -631,6 +636,38 @@
 
     row.appendChild(body);
     return row;
+  }
+
+  function buildEmote(message) {
+    const row = document.createElement('div');
+    row.className = 'row row--emote';
+    row.dataset.id = message.id;
+    const line = document.createElement('div');
+    line.className = 'emote';
+    line.appendChild(avatarFor(message.user, 'sm'));
+    const body = document.createElement('span');
+    body.className = 'emote__text';
+    body.innerHTML =
+      `<b style="color:${EasyMarkdown.escapeHtml(colorFor(message.user))}">${EasyMarkdown.escapeHtml(
+        message.user
+      )}</b> ` + EasyMarkdown.render(message.text, { me: state.me });
+    line.appendChild(body);
+    row.appendChild(line);
+    const reactions = buildReactions(message);
+    if (reactions) row.appendChild(reactions);
+    return row;
+  }
+
+  /* Only the person who typed the command sees this, and it is never stored. */
+  function showNotice(text) {
+    dropEmptyState();
+    const node = document.createElement('div');
+    node.className = 'notice';
+    node.innerHTML =
+      '<span class="notice__tag">only you can see this</span>' +
+      EasyMarkdown.render(text, { me: state.me });
+    el.inner.appendChild(node);
+    scrollToBottom(true);
   }
 
   function dayDivider(ts) {
@@ -939,6 +976,14 @@
       name.className = 'member__name';
       name.textContent = member.username;
       item.appendChild(name);
+      if (member.status) {
+        item.classList.add('member--away');
+        name.title = member.status;
+        const away = document.createElement('span');
+        away.className = 'member__away';
+        away.textContent = member.status;
+        item.appendChild(away);
+      }
       if (member.username === state.me) {
         const you = document.createElement('span');
         you.className = 'member__you';
@@ -1172,6 +1217,7 @@
         state.gifsEnabled = Boolean(data.gifsEnabled);
         state.rooms = data.rooms || [];
         state.profiles = data.profiles || {};
+        state.commands = data.commands || [];
         if (data.unread) {
           state.unread = new Map(Object.entries(data.unread).filter(([, count]) => count > 0));
         }
@@ -1279,6 +1325,18 @@
         }
         break;
 
+      case 'notice':
+        showNotice(data.text);
+        break;
+
+      case 'room-meta':
+        if (data.roomId === state.roomId) {
+          el.roomName.textContent = data.name;
+          el.roomTopic.textContent = data.topic || '';
+          el.roomTopic.hidden = !data.topic;
+        }
+        break;
+
       case 'profiles':
         state.profiles = data.profiles || {};
         repaintPeople();
@@ -1313,6 +1371,7 @@
       case 'role':
         state.isHost = Boolean(data.isHost);
         state.isOwner = Boolean(data.isOwner);
+        if (data.commands) state.commands = data.commands;
         el.meHost.hidden = !state.isHost;
         el.meHost.textContent = state.isOwner ? 'OWNER' : 'HOST';
         el.meHost.classList.toggle('host-badge--owner', state.isOwner);
@@ -1561,11 +1620,14 @@
     autosize();
     refreshSendState();
     saveDraft();
+    state.cmdIndex = 0;
+    renderCommandMenu();
     if (el.input.value.trim()) signalTyping();
     else stopTyping();
   });
 
   el.input.addEventListener('keydown', (event) => {
+    if (commandKeys(event)) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       el.form.requestSubmit();
@@ -1609,6 +1671,8 @@
     if (!send(payload)) return toast('Still reconnecting — try again in a second.', 'error');
     askToNotify();
     el.input.value = '';
+    el.cmdMenu.hidden = true;
+    state.cmdMatches = [];
     saveDraft();
     autosize();
     clearAttachment();
@@ -2089,6 +2153,92 @@ ${rows}
     el.confirmOk.textContent = danger;
     state.confirmAction = onYes;
     openDialog(el.confirmModal, el.confirmCancel);
+  }
+
+  /* ---------- slash commands ---------- */
+
+  function commandMatches() {
+    const value = el.input.value;
+    if (!value.startsWith('/') || value.startsWith('//')) return [];
+    const typed = value.slice(1).split(' ')[0].toLowerCase();
+    // once there is a space, the command is settled and we are on to its arguments
+    if (value.slice(1).includes(' ')) return [];
+    return state.commands.filter((entry) => entry.name.startsWith(typed));
+  }
+
+  function renderCommandMenu() {
+    const matches = commandMatches();
+    state.cmdMatches = matches;
+    if (!matches.length) {
+      el.cmdMenu.hidden = true;
+      return;
+    }
+    if (state.cmdIndex >= matches.length) state.cmdIndex = 0;
+    el.cmdMenu.textContent = '';
+    matches.forEach((entry, index) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `cmd${index === state.cmdIndex ? ' cmd--on' : ''}`;
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(index === state.cmdIndex));
+      item.innerHTML =
+        `<span class="cmd__name">${EasyMarkdown.escapeHtml(entry.usage)}</span>` +
+        `<span class="cmd__help">${EasyMarkdown.escapeHtml(entry.help)}</span>` +
+        (entry.hostOnly ? '<span class="cmd__tag">HOST</span>' : '');
+      item.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        chooseCommand(index);
+      });
+      el.cmdMenu.appendChild(item);
+    });
+    el.cmdMenu.hidden = false;
+  }
+
+  function chooseCommand(index) {
+    const entry = state.cmdMatches[index];
+    if (!entry) return;
+    // usage looks like "/roll [2d6]"; keep the name, drop the example
+    el.input.value = `/${entry.name}${entry.usage.includes(' ') ? ' ' : ''}`;
+    el.cmdMenu.hidden = true;
+    state.cmdMatches = [];
+    el.input.focus();
+    autosize();
+    refreshSendState();
+  }
+
+  function commandKeys(event) {
+    if (el.cmdMenu.hidden || !state.cmdMatches.length) return false;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      state.cmdIndex = (state.cmdIndex + step + state.cmdMatches.length) % state.cmdMatches.length;
+      renderCommandMenu();
+      return true;
+    }
+    if (event.key === 'Enter') {
+      // a command you have already typed in full should send, not re-complete
+      const typed = el.input.value.slice(1).toLowerCase();
+      if (state.cmdMatches.some((entry) => entry.name === typed)) {
+        el.cmdMenu.hidden = true;
+        state.cmdMatches = [];
+        return false;
+      }
+      event.preventDefault();
+      chooseCommand(state.cmdIndex);
+      return true;
+    }
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      chooseCommand(state.cmdIndex);
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      el.cmdMenu.hidden = true;
+      state.cmdMatches = [];
+      return true;
+    }
+    return false;
   }
 
   /* ---------- the emoji picker ---------- */

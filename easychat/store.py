@@ -171,6 +171,45 @@ class ChatStore:
         self.save(room_id)
         return room
 
+    def set_topic(self, room_id, topic):
+        with self.lock:
+            room = self.rooms.get(room_id)
+            if room is None:
+                return False
+            room["topic"] = str(topic)[:120]
+        self.save(room_id)
+        return True
+
+    def rename_room(self, room_id, name):
+        """The id (and so the filename) stays put; only the display name moves."""
+        with self.lock:
+            room = self.rooms.get(room_id)
+            if room is None:
+                return "That room is gone."
+            wanted = name.strip().lower()
+            for other in self.rooms.values():
+                if other is not room and other["name"].lower() == wanted:
+                    return f'"{name}" is already taken by another room.'
+            room["name"] = name.strip()[:40]
+        self.save(room_id)
+        return None
+
+    def unban(self, room_id, username):
+        with self.lock:
+            room = self.rooms.get(room_id)
+            if room is None:
+                return False
+            banned = room.get("banned") or []
+            kept = [name for name in banned if name.lower() != username.lower()]
+            if len(kept) == len(banned):
+                return False
+            if kept:
+                room["banned"] = kept
+            else:
+                room.pop("banned", None)
+        self.save(room_id)
+        return True
+
     def rename_user(self, old, new):
         """Move every mention of a name across, so history keeps its author."""
         touched = []

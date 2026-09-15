@@ -955,6 +955,120 @@ button, input, textarea { font: inherit; color: inherit; }
 .reply-quote__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-500); }
 .row--me .reply-quote { align-self: flex-end; }
 
+/* ---------- slash commands ---------- */
+
+.cmd-menu {
+  margin: 0 4px 8px;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  max-height: 232px;
+  overflow-y: auto;
+  animation: fade-up .18s var(--ease) both;
+}
+.cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background .13s var(--ease-soft);
+}
+.cmd:hover { background: var(--surface-soft); }
+.cmd--on {
+  background: var(--blue-50);
+  box-shadow: inset 3px 0 0 var(--blue-500);
+}
+.cmd__name {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--blue-700);
+}
+.cmd__help {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-500);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmd__tag {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--blue-100);
+  color: var(--blue-700);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .07em;
+}
+
+/* ---------- an emote, and a notice only you can see ---------- */
+
+.row--emote { display: block; margin-top: 10px; }
+.emote {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 6px;
+  color: var(--ink-500);
+  font-size: 13.5px;
+  font-style: italic;
+}
+.emote__text b { font-style: normal; font-weight: 600; }
+.emote__text strong { color: var(--ink-900); font-style: normal; }
+.row--emote .reacts { margin-left: 41px; }
+
+.notice {
+  margin: 10px 0;
+  padding: 12px 15px;
+  border: 1px dashed var(--blue-200);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--ink-700);
+  font-size: 13.5px;
+  line-height: 1.6;
+  animation: fade-up .3s var(--ease) both;
+}
+.notice__tag {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-300);
+}
+.notice code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: var(--code-bg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .9em;
+}
+.notice strong { color: var(--ink-900); }
+
+.member--away { opacity: .62; }
+.member__away {
+  margin-left: auto;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-style: italic;
+  color: var(--sidebar-dim);
+}
+
 .reply-bar {
   display: flex;
   align-items: center;
