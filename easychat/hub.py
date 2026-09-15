@@ -15,6 +15,10 @@ TYPING_TTL_SECONDS = 6
 RATE_LIMIT_MESSAGES = 10
 RATE_LIMIT_WINDOW = 10
 LEAVE_GRACE_SECONDS = 8
+ROOM_PASSWORD_MIN = 4
+ROOM_PASSWORD_MAX = 64
+UNLOCK_ATTEMPT_LIMIT = 6
+UNLOCK_ATTEMPT_WINDOW = 60
 
 USERNAME_RE = re.compile(r"^[\w .\-]{2,24}$", re.UNICODE)
 TENOR_URL_RE = re.compile(r"^https://media\d*\.tenor\.com/")
@@ -28,6 +32,8 @@ class Client:
         self.room_id = None
         self.joined_at = 0
         self.stamps = []
+        self.unlocked = set()  # rooms this connection has given the password for
+        self.unlock_fails = []
 
     def send(self, payload):
         self.ws.send_text(json.dumps(payload))
@@ -202,7 +208,7 @@ class Hub:
         if kind == "typing":
             return self.set_typing(client, bool(data.get("state")))
         if kind == "switch":
-            return self.enter_room(client, str(data.get("roomId") or ""))
+            return self.enter_room(client, str(data.get("roomId") or ""), data.get("password"))
         if kind == "create-room":
             return self._handle_create_room(client, data)
 
@@ -229,9 +235,6 @@ class Hub:
         client.username = username
         client.joined_at = store_mod.now_ms()
         rooms = self.rooms_with_presence()
-        wanted = data.get("roomId")
-        if not any(room["id"] == wanted for room in rooms):
-            wanted = rooms[0]["id"]
         client.send(
             {
                 "type": "welcome",
@@ -240,15 +243,67 @@ class Hub:
                 "gifsEnabled": self.settings.gifs_enabled,
             }
         )
-        self.enter_room(client, wanted)
 
-    def enter_room(self, client, room_id):
+        wanted = data.get("roomId")
+        keys = data.get("roomKeys") if isinstance(data.get("roomKeys"), dict) else {}
+        if any(room["id"] == wanted for room in rooms):
+            if self.enter_room(client, wanted, keys.get(wanted), quiet=True):
+                return
+        # otherwise the first room they can walk straight into
+        for room in rooms:
+            if not room["locked"] or room["id"] in keys:
+                if self.enter_room(client, room["id"], keys.get(room["id"]), quiet=True):
+                    return
+        client.send({"type": "no-room"})
+
+    def enter_room(self, client, room_id, password=None, quiet=False):
+        """Returns True once the client is inside the room."""
         room = self.store.get_room(room_id)
         if room is None:
-            return client.send({"type": "error", "code": "no-room", "message": "That room no longer exists."})
+            client.send({"type": "error", "code": "no-room", "message": "That room no longer exists."})
+            return False
         previous = client.room_id
         if previous == room_id:
-            return
+            return True
+
+        if store_mod.is_locked(room) and room_id not in client.unlocked:
+            if not password:
+                if not quiet:
+                    client.send(
+                        {
+                            "type": "error",
+                            "code": "room-locked",
+                            "roomId": room_id,
+                            "roomName": room["name"],
+                            "message": f'"{room["name"]}" needs a password.',
+                        }
+                    )
+                return False
+            if self._unlock_throttled(client):
+                client.send(
+                    {
+                        "type": "error",
+                        "code": "unlock-throttled",
+                        "roomId": room_id,
+                        "roomName": room["name"],
+                        "message": "Too many wrong passwords. Wait a minute and try again.",
+                    }
+                )
+                return False
+            if not store_mod.verify_password(room.get("password"), password):
+                client.unlock_fails.append(time.time())
+                client.send(
+                    {
+                        "type": "error",
+                        "code": "bad-room-password",
+                        "roomId": room_id,
+                        "roomName": room["name"],
+                        "message": "That room password is not right.",
+                    }
+                )
+                return False
+            client.unlocked.add(room_id)
+
         if previous:
             self._clear_typing_everywhere(client)
             self._announce_leave(previous, client.username)
@@ -256,7 +311,12 @@ class Hub:
         client.send(
             {
                 "type": "room",
-                "room": {"id": room["id"], "name": room["name"], "topic": room.get("topic", "")},
+                "room": {
+                    "id": room["id"],
+                    "name": room["name"],
+                    "topic": room.get("topic", ""),
+                    "locked": store_mod.is_locked(room),
+                },
                 "messages": self.store.recent_messages(room_id, HISTORY_LIMIT),
                 "members": self._members_snapshot(room_id),
             }
@@ -265,6 +325,12 @@ class Hub:
         if previous:
             self.push_presence(previous)
         self.push_presence(room_id)
+        return True
+
+    def _unlock_throttled(self, client):
+        now = time.time()
+        client.unlock_fails = [stamp for stamp in client.unlock_fails if now - stamp < UNLOCK_ATTEMPT_WINDOW]
+        return len(client.unlock_fails) >= UNLOCK_ATTEMPT_LIMIT
 
     def _rate_limited(self, client):
         now = time.time()
@@ -316,13 +382,23 @@ class Hub:
 
     def _handle_create_room(self, client, data):
         name = str(data.get("name") or "").strip()[:40]
+        password = str(data.get("password") or "")[:ROOM_PASSWORD_MAX]
         if len(name) < 2:
             return client.send(
                 {"type": "error", "code": "bad-room", "message": "Room names need at least 2 characters."}
             )
+        if len(password.strip()) < ROOM_PASSWORD_MIN:
+            return client.send(
+                {
+                    "type": "error",
+                    "code": "weak-room-password",
+                    "message": f"Give the room a password of at least {ROOM_PASSWORD_MIN} characters.",
+                }
+            )
         if self.store.has_room_named(name):
             return client.send({"type": "error", "code": "dup-room", "message": f'"{name}" already exists.'})
-        room = self.store.create_room(name, str(data.get("topic") or ""))
+        room = self.store.create_room(name, str(data.get("topic") or ""), password.strip())
+        client.unlocked.add(room["id"])  # whoever made it is already inside
         self.broadcast_all({"type": "rooms", "rooms": self.rooms_with_presence()})
         self.enter_room(client, room["id"])
 

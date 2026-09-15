@@ -6,6 +6,7 @@ starts talking. Every conversation is a plain JSON file in an **EasyChat Chats**
 folder on the host machine — nothing is stored anywhere else.
 
 - Blue-and-white interface with iMessage-style bubbles and a Discord-style room list
+- Every room has its own password, chosen when the room is made
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
 - GIF search powered by Tenor
@@ -96,28 +97,72 @@ asks Tenor, so the key is never sent to anyone in the room.
 
 ---
 
+## Rooms and passwords
+
+Every room made from the **+** button needs a password, typed when the room is
+created. Anyone who clicks that room is asked for it before they see a single
+message, and rooms they cannot open show a padlock in the list.
+
+The one exception is **General**, the room created on first run. It is open, so
+that people who have the link and the front-door passcode always land
+somewhere. Lock it too if you want — see below.
+
+A password is remembered for as long as that browser tab is open, so switching
+rooms and reloading do not ask again. Everyone else — a new tab, another
+person, tomorrow — is asked once.
+
+Passwords are stored as a PBKDF2 hash, never as the text that was typed, so
+someone who gets hold of a chat file cannot read the password out of it. That
+means a forgotten room password cannot be looked up. It can be replaced:
+
+**To set, change or remove a room's password by hand**, stop the chat and open
+that room's JSON file:
+
+```jsonc
+// set or change it: type the new password as plain text
+"password": "new-password-here",
+
+// remove it, making the room open to everyone:
+// delete the whole "password" line
+```
+
+Start the chat again. On the way up the server hashes what you typed and
+rewrites the file, so the plain text does not sit on disk — the console prints
+`stored the password for <room> as a hash` when it does.
+
+Guessing is throttled: six wrong passwords from one connection and it stops
+answering for a minute.
+
 ## The chats folder
 
 ```
 EasyChat Chats/
   general.json
-  random.json
-  design-talk.json
+  secret-lair.json
+  weekend-plans.json
 ```
 
 Each file holds one room and its messages:
 
 ```json
 {
-  "id": "general",
-  "name": "General",
-  "topic": "The default room. Say hi.",
+  "id": "secret-lair",
+  "name": "Secret Lair",
+  "topic": "Planning the party",
   "createdAt": 1789475735566,
+  "password": {
+    "algo": "pbkdf2_sha256",
+    "iterations": 120000,
+    "salt": "64a8dd2b020f69b724d8c21a96b2615c",
+    "hash": "62a29e6fd931ec8fa5a7f3e6c52bece6…"
+  },
   "messages": [
     { "id": "…", "type": "chat", "user": "riley", "text": "hey **everyone**", "attachment": null, "ts": 1789475737822 }
   ]
 }
 ```
+
+A room with no `password` field is open to everyone.
 
 Back it up by copying the folder. Delete a file to delete a room (restart
 afterwards). Rooms made with the **+** button in the app show up here right
@@ -131,7 +176,7 @@ All of these live in `.env`:
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `PORT` | `3000` | Port the server listens on |
-| `ROOM_PASSWORD` | _empty_ | Passcode required to enter. Empty means anyone with the link can join |
+| `ROOM_PASSWORD` | _empty_ | The front door: passcode typed with your username. Empty means anyone with the link can sign in |
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
 | `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |
@@ -176,8 +221,12 @@ manual steps above.
 
 ## Good to know
 
-- **A quick tunnel link is public.** The passcode keeps strangers out of the
-  room; it is not encryption. Don't put anything sensitive in there.
+- **A quick tunnel link is public.** The passcodes keep strangers out; they are
+  not encryption. Don't put anything sensitive in there.
+- There are two layers: the `ROOM_PASSWORD` in `.env` is the front door for the
+  whole site, and each room has its own password on top of it.
+- Room passwords are stored as PBKDF2-SHA256 hashes with a random salt, and a
+  room's history is only sent after the password checks out.
 - Messages are HTML-escaped before markdown is applied, so nobody can inject
   markup or scripts into anyone else's browser.
 - Only `https://media*.tenor.com` images can be attached — nobody can make the

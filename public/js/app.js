@@ -51,9 +51,19 @@
     roomModal: $('room-modal'),
     roomForm: $('room-form'),
     roomInput: $('room-input'),
+    roomPasswordInput: $('room-password-input'),
     roomTopicInput: $('room-topic-input'),
+    roomError: $('room-error'),
     roomCancel: $('room-cancel'),
     newRoom: $('new-room'),
+    roomLock: $('room-lock'),
+
+    unlockModal: $('unlock-modal'),
+    unlockForm: $('unlock-form'),
+    unlockTitle: $('unlock-title'),
+    unlockInput: $('unlock-input'),
+    unlockError: $('unlock-error'),
+    unlockCancel: $('unlock-cancel'),
 
     meName: $('me-name'),
     meAvatar: $('me-avatar'),
@@ -77,7 +87,53 @@
     stickToBottom: true,
     missed: 0,
     gifsEnabled: false,
+    roomKeys: {},      // roomId -> the password this browser has already used
+    pendingUnlock: '', // room the unlock dialog is asking about
+    pendingRoomKey: null, // password waiting to be confirmed by the server
   };
+
+  /* Room passwords live in this tab only, so a reconnect does not re-ask. */
+  function loadRoomKeys() {
+    try {
+      state.roomKeys = JSON.parse(sessionStorage.getItem('easychat.roomKeys') || '{}') || {};
+    } catch {
+      state.roomKeys = {};
+    }
+  }
+
+  function rememberRoomKey(roomId, password) {
+    state.roomKeys[roomId] = password;
+    try {
+      sessionStorage.setItem('easychat.roomKeys', JSON.stringify(state.roomKeys));
+    } catch {
+      /* private mode - the key just lives in memory */
+    }
+  }
+
+  function rememberLastRoom(roomId) {
+    try {
+      sessionStorage.setItem('easychat.lastRoom', roomId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function lastRoom() {
+    try {
+      return sessionStorage.getItem('easychat.lastRoom') || '';
+    } catch {
+      return '';
+    }
+  }
+
+  function forgetRoomKey(roomId) {
+    delete state.roomKeys[roomId];
+    try {
+      sessionStorage.setItem('easychat.roomKeys', JSON.stringify(state.roomKeys));
+    } catch {
+      /* ignore */
+    }
+  }
 
   /* ---------- helpers ---------- */
 
@@ -280,7 +336,13 @@
 
       const hash = document.createElement('span');
       hash.className = 'room__hash';
-      hash.textContent = '#';
+      if (room.locked) {
+        hash.classList.add('room__hash--lock');
+        hash.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10V8a4 4 0 0 1 8 0v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="6" y="10" width="12" height="9" rx="2.2" fill="currentColor"/></svg>';
+        hash.title = state.roomKeys[room.id] ? 'Password already given' : 'Password required';
+      } else {
+        hash.textContent = '#';
+      }
 
       const name = document.createElement('span');
       name.className = 'room__name';
@@ -303,14 +365,62 @@
 
       button.addEventListener('click', () => {
         if (room.id === state.roomId) return closeSidebar();
-        send({ type: 'switch', roomId: room.id });
         closeSidebar();
+        openRoom(room);
       });
 
       item.appendChild(button);
       el.roomList.appendChild(item);
     });
     updateTitle();
+  }
+
+  function openRoom(room) {
+    const key = state.roomKeys[room.id];
+    if (room.locked && !key) return askForRoomPassword(room.id, room.name);
+    send({ type: 'switch', roomId: room.id, password: key || '' });
+  }
+
+  function askForRoomPassword(roomId, roomName, errorText) {
+    state.pendingUnlock = roomId;
+    el.unlockTitle.textContent = `${roomName} is locked`;
+    el.unlockInput.value = '';
+    el.unlockError.hidden = !errorText;
+    if (errorText) el.unlockError.textContent = errorText;
+    el.unlockModal.hidden = false;
+    setTimeout(() => el.unlockInput.focus(), 60);
+  }
+
+  function closeUnlock() {
+    el.unlockModal.hidden = true;
+    state.pendingUnlock = '';
+  }
+
+  function setComposerEnabled(enabled) {
+    el.input.disabled = !enabled;
+    el.gifBtn.disabled = !enabled;
+    el.input.placeholder = enabled ? 'Message the room…' : 'Pick a room to start talking';
+    refreshSendState();
+  }
+
+  function showNoRoom() {
+    state.roomId = '';
+    el.roomName.textContent = 'No room yet';
+    el.roomName.classList.add('is-empty');
+    el.roomTopic.hidden = true;
+    el.roomLock.hidden = true;
+    el.roomOnline.textContent = '0 online';
+    clearMessages();
+    const wrap = document.createElement('div');
+    wrap.className = 'empty';
+    wrap.innerHTML =
+      '<div class="empty__mark">&#128274;</div>' +
+      '<h3>Pick a room</h3>' +
+      '<p>The rooms in the list need a password. Choose one and type its password, or create a room of your own.</p>';
+    el.inner.appendChild(wrap);
+    renderMembers([]);
+    renderRooms();
+    setComposerEnabled(false);
   }
 
   function renderMembers(members) {
@@ -401,7 +511,13 @@
       el.connState.textContent = 'Connected';
       el.connState.className = 'conn conn--live';
       if (state.me) {
-        send({ type: 'join', username: state.me, password: state.password, roomId: state.roomId });
+        send({
+          type: 'join',
+          username: state.me,
+          password: state.password,
+          roomId: state.roomId,
+          roomKeys: state.roomKeys,
+        });
       }
     });
 
@@ -443,6 +559,10 @@
 
       case 'rooms':
         state.rooms = data.rooms || [];
+        if (state.pendingRoomKey && state.pendingRoomKey.roomId === null) {
+          const made = state.rooms.find((room) => room.name === state.pendingRoomKey.name);
+          if (made) state.pendingRoomKey.roomId = made.id;
+        }
         renderRooms();
         break;
 
@@ -450,6 +570,15 @@
         const previous = state.roomId;
         state.roomId = data.room.id;
         state.unread.set(data.room.id, 0);
+        if (state.pendingRoomKey && state.pendingRoomKey.roomId === data.room.id) {
+          rememberRoomKey(data.room.id, state.pendingRoomKey.password);
+        }
+        state.pendingRoomKey = null;
+        rememberLastRoom(data.room.id);
+        closeUnlock();
+        setComposerEnabled(true);
+        el.roomLock.hidden = !data.room.locked;
+        el.roomName.classList.remove('is-empty');
         el.roomName.textContent = data.room.name;
         el.roomTopic.textContent = data.room.topic || '';
         el.roomTopic.hidden = !data.room.topic;
@@ -483,6 +612,10 @@
         break;
       }
 
+      case 'no-room':
+        showNoRoom();
+        break;
+
       case 'presence':
         if (data.roomId === state.roomId) renderMembers(data.members || []);
         break;
@@ -492,6 +625,22 @@
         break;
 
       case 'error':
+        if (data.code === 'room-locked') {
+          state.pendingRoomKey = null;
+          return askForRoomPassword(data.roomId, data.roomName);
+        }
+        if (data.code === 'bad-room-password' || data.code === 'unlock-throttled') {
+          state.pendingRoomKey = null;
+          forgetRoomKey(data.roomId);
+          renderRooms();
+          return askForRoomPassword(data.roomId, data.roomName, data.message);
+        }
+        if (data.code === 'weak-room-password' || data.code === 'dup-room' || data.code === 'bad-room') {
+          el.roomError.textContent = data.message;
+          el.roomError.hidden = false;
+          el.roomModal.hidden = false;
+          return;
+        }
         if (!state.joined) showGateError(data.message);
         else toast(data.message, 'error');
         if (!state.joined) {
@@ -544,7 +693,7 @@
     el.gateError.hidden = true;
     el.gateSubmit.disabled = true;
     el.gateSubmit.querySelector('.btn__label').textContent = 'Connecting…';
-    if (!send({ type: 'join', username, password: state.password, roomId: '' })) {
+    if (!send({ type: 'join', username, password: state.password, roomId: lastRoom(), roomKeys: state.roomKeys })) {
       connect();
     }
   });
@@ -557,7 +706,8 @@
   }
 
   function refreshSendState() {
-    el.send.disabled = !el.input.value.trim() && !state.pendingGif;
+    const hasContent = Boolean(el.input.value.trim()) || Boolean(state.pendingGif);
+    el.send.disabled = !hasContent || !state.roomId;
   }
 
   el.input.addEventListener('input', () => {
@@ -690,7 +840,9 @@
   el.newRoom.addEventListener('click', () => {
     el.roomModal.hidden = false;
     el.roomInput.value = '';
+    el.roomPasswordInput.value = '';
     el.roomTopicInput.value = '';
+    el.roomError.hidden = true;
     setTimeout(() => el.roomInput.focus(), 60);
   });
   el.roomCancel.addEventListener('click', () => {
@@ -702,10 +854,33 @@
   el.roomForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const name = el.roomInput.value.trim();
+    const password = el.roomPasswordInput.value;
     if (name.length < 2) return;
-    send({ type: 'create-room', name, topic: el.roomTopicInput.value.trim() });
+    if (password.trim().length < 4) {
+      el.roomError.textContent = 'Give the room a password of at least 4 characters.';
+      el.roomError.hidden = false;
+      return;
+    }
+    state.pendingRoomKey = { roomId: null, password: password.trim(), name };
+    send({ type: 'create-room', name, topic: el.roomTopicInput.value.trim(), password: password.trim() });
     el.roomModal.hidden = true;
     closeSidebar();
+  });
+
+  /* ---------- unlocking a room ---------- */
+
+  el.unlockForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const password = el.unlockInput.value;
+    if (!password || !state.pendingUnlock) return;
+    state.pendingRoomKey = { roomId: state.pendingUnlock, password };
+    el.unlockError.hidden = true;
+    send({ type: 'switch', roomId: state.pendingUnlock, password });
+  });
+
+  el.unlockCancel.addEventListener('click', closeUnlock);
+  el.unlockModal.addEventListener('click', (event) => {
+    if (event.target === el.unlockModal) closeUnlock();
   });
 
   function openSidebar() {
@@ -724,6 +899,7 @@
     if (event.key === 'Escape') {
       closeGifPanel();
       closeSidebar();
+      closeUnlock();
       el.roomModal.hidden = true;
     }
   });
@@ -749,6 +925,7 @@
     /* ignore */
   }
 
+  loadRoomKeys();
   refreshSendState();
   connect();
   el.gateUser.focus();

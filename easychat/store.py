@@ -4,6 +4,8 @@ Nothing here is clever on purpose: a room is a dict, a file is that dict
 dumped with indent=2, so the host can open one in Notepad and read it.
 """
 
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -13,6 +15,38 @@ import time
 import unicodedata
 
 SAVE_DEBOUNCE_SECONDS = 0.4
+
+PBKDF2_ITERATIONS = 120_000
+MIN_PASSWORD_LENGTH = 4
+
+
+def hash_password(plain):
+    """Room passwords are stored hashed, never as the typed text."""
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac("sha256", plain.encode("utf-8"), salt, PBKDF2_ITERATIONS)
+    return {
+        "algo": "pbkdf2_sha256",
+        "iterations": PBKDF2_ITERATIONS,
+        "salt": salt.hex(),
+        "hash": digest.hex(),
+    }
+
+
+def verify_password(stored, candidate):
+    if not isinstance(stored, dict) or not candidate:
+        return False
+    try:
+        salt = bytes.fromhex(stored["salt"])
+        iterations = int(stored["iterations"])
+        expected = bytes.fromhex(stored["hash"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", str(candidate).encode("utf-8"), salt, iterations)
+    return hmac.compare_digest(digest, expected)
+
+
+def is_locked(room):
+    return isinstance(room.get("password"), dict)
 
 
 def slugify(name):
@@ -37,6 +71,7 @@ class ChatStore:
 
     def init(self):
         self.dir.mkdir(parents=True, exist_ok=True)
+        rehashed = []
         for path in sorted(self.dir.glob("*.json")):
             try:
                 room = json.loads(path.read_text(encoding="utf-8"))
@@ -48,11 +83,25 @@ class ChatStore:
                 if not isinstance(room["messages"], list):
                     room["messages"] = []
                 self.rooms[room["id"]] = room
+                # the host may set or reset a password by typing it into the
+                # file as plain text; it gets hashed on the next start
+                typed = room.get("password")
+                if isinstance(typed, str):
+                    if typed.strip():
+                        room["password"] = hash_password(typed.strip())
+                        rehashed.append(room["id"])
+                    else:
+                        room.pop("password", None)
+                        rehashed.append(room["id"])
+                elif typed is not None and not isinstance(typed, dict):
+                    room.pop("password", None)
             except Exception as err:  # a hand-edited file should not stop the server
                 print(f"[store] skipping {path.name}: {err}")
+        for room_id in rehashed:
+            self.save(room_id)
+            print(f"[store] stored the password for {room_id} as a hash")
         if not self.rooms:
-            self.create_room("General", "The default room. Say hi.")
-            self.create_room("Random", "Off-topic, memes, GIF wars.")
+            self.create_room("General", "Open to everyone. Say hi.")
         return self
 
     def file_path(self, room_id):
@@ -70,6 +119,7 @@ class ChatStore:
                     "topic": room.get("topic", ""),
                     "messageCount": len(room["messages"]),
                     "lastActivity": room["messages"][-1]["ts"] if room["messages"] else room["createdAt"],
+                    "locked": is_locked(room),
                 }
                 for room in rooms
             ]
@@ -90,7 +140,7 @@ class ChatStore:
 
     # ---------- writing ----------
 
-    def create_room(self, name, topic=""):
+    def create_room(self, name, topic="", password=None):
         clean = name.strip()[:40]
         with self.lock:
             room_id = slugify(clean)
@@ -103,6 +153,8 @@ class ChatStore:
                 "createdAt": now_ms(),
                 "messages": [],
             }
+            if password:
+                room["password"] = hash_password(password)
             self.rooms[room_id] = room
         self.save(room_id)
         return room

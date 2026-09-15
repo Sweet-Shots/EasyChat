@@ -90,6 +90,10 @@
         <h2 id="room-name">…</h2>
         <p id="room-topic" class="chat__topic"></p>
       </div>
+      <div id="room-lock" class="pill pill--lock" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="5" y="10" width="14" height="10" rx="2.5" fill="currentColor"/></svg>
+        <span>Private</span>
+      </div>
       <div id="room-online" class="pill pill--online"><i></i><span>0 online</span></div>
     </header>
 
@@ -149,12 +153,38 @@
       <input id="room-input" class="field__input" type="text" maxlength="40" placeholder="design-talk" required />
     </label>
     <label class="field">
+      <span class="field__label">Room password</span>
+      <input id="room-password-input" class="field__input" type="password" maxlength="64" placeholder="At least 4 characters" required />
+    </label>
+    <label class="field">
       <span class="field__label">Topic <span class="field__opt">optional</span></span>
       <input id="room-topic-input" class="field__input" type="text" maxlength="120" placeholder="What is this room for?" />
     </label>
+    <p class="modal__hint">Everyone who joins this room has to type this password. Share it with the people you want in.</p>
+    <p id="room-error" class="gate__error" role="alert" hidden></p>
     <div class="modal__actions">
       <button id="room-cancel" class="btn btn--ghost" type="button">Cancel</button>
       <button class="btn btn--primary" type="submit">Create</button>
+    </div>
+  </form>
+</div>
+
+<!-- ───────── Room password ───────── -->
+<div id="unlock-modal" class="modal" hidden>
+  <form id="unlock-form" class="modal__card modal__card--center">
+    <div class="modal__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M7 10V8a5 5 0 0 1 10 0v2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><rect x="5" y="10" width="14" height="10" rx="2.5" fill="currentColor"/></svg>
+    </div>
+    <h3 class="modal__title" id="unlock-title">This room is locked</h3>
+    <p class="modal__hint">Ask whoever created it for the password.</p>
+    <label class="field">
+      <span class="field__label">Room password</span>
+      <input id="unlock-input" class="field__input" type="password" maxlength="64" placeholder="Room password" required />
+    </label>
+    <p id="unlock-error" class="gate__error" role="alert" hidden></p>
+    <div class="modal__actions">
+      <button id="unlock-cancel" class="btn btn--ghost" type="button">Cancel</button>
+      <button class="btn btn--primary" type="submit">Unlock</button>
     </div>
   </form>
 </div>
