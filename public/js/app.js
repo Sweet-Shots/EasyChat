@@ -51,6 +51,10 @@
     attachImg: $('gif-attachment-img'),
     attachRemove: $('gif-attachment-remove'),
 
+    attachRow: $('attach-row'),
+    attachBtn: $('attach-btn'),
+    fileInput: $('file-input'),
+    drop: $('drop'),
     gifPanel: $('gif-panel'),
     gifSearch: $('gif-search'),
     gifClose: $('gif-close'),
@@ -132,6 +136,9 @@
     hasMore: false,
     loadingHistory: false,
     searchTimer: null,
+    pendingFiles: [],   // uploaded and signed, waiting to be sent
+    uploading: 0,
+    dragDepth: 0,
   };
 
   /* The sign-in token outlives the tab, so you stay signed in like any site. */
@@ -213,6 +220,12 @@
     node.textContent = name.trim().charAt(0) || '?';
     node.title = name;
     return node;
+  }
+
+  function prettySize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 
   function timeOf(ts) {
@@ -333,7 +346,58 @@
       return bubble;
     }
 
-    if (message.attachment && message.attachment.kind === 'gif') {
+    const kind = message.attachment && message.attachment.kind;
+
+    if (kind === 'image') {
+      bubble.classList.add('bubble--gif');
+      const link = document.createElement('a');
+      link.href = message.attachment.url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      const img = document.createElement('img');
+      img.className = 'bubble__gif';
+      img.loading = 'lazy';
+      img.src = message.attachment.url;
+      img.alt = message.attachment.name || 'Image';
+      if (message.attachment.width && message.attachment.height) {
+        img.style.aspectRatio = `${message.attachment.width} / ${message.attachment.height}`;
+        img.style.width = `${Math.min(message.attachment.width, 320)}px`;
+      }
+      img.addEventListener('load', () => {
+        if (state.stickToBottom) scrollToBottom(false);
+      });
+      link.appendChild(img);
+      bubble.appendChild(link);
+      if (message.text) {
+        const caption = document.createElement('div');
+        caption.className = 'bubble__caption';
+        caption.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
+        bubble.appendChild(caption);
+      }
+      return bubble;
+    }
+
+    if (kind === 'file') {
+      const card = document.createElement('a');
+      card.className = 'file-card';
+      card.href = message.attachment.url;
+      card.download = message.attachment.name || 'file';
+      card.innerHTML =
+        '<span class="file-card__icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M14 3v5h5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg></span>' +
+        `<span class="file-card__body"><strong>${EasyMarkdown.escapeHtml(message.attachment.name || 'file')}</strong>` +
+        `<span>${prettySize(message.attachment.size || 0)}</span></span>` +
+        '<span class="file-card__down"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>';
+      bubble.appendChild(card);
+      if (message.text) {
+        const caption = document.createElement('div');
+        caption.className = 'bubble__caption';
+        caption.innerHTML = EasyMarkdown.render(message.text, { me: state.me });
+        bubble.appendChild(caption);
+      }
+      return bubble;
+    }
+
+    if (kind === 'gif') {
       bubble.classList.add('bubble--gif');
       const img = document.createElement('img');
       img.className = 'bubble__gif';
@@ -342,6 +406,7 @@
       img.alt = message.attachment.title || 'GIF';
       if (message.attachment.width && message.attachment.height) {
         img.style.aspectRatio = `${message.attachment.width} / ${message.attachment.height}`;
+        img.style.width = `${Math.min(message.attachment.width, 320)}px`;
       }
       img.addEventListener('load', () => {
         if (state.stickToBottom) scrollToBottom(false);
@@ -1035,6 +1100,14 @@
         break;
       }
 
+      case 'upload-ticket':
+        if (state.ticketWaiter) {
+          const resolve = state.ticketWaiter;
+          state.ticketWaiter = null;
+          resolve(data.ticket);
+        }
+        break;
+
       case 'search':
         renderSearchResults(data);
         break;
@@ -1201,8 +1274,9 @@
   }
 
   function refreshSendState() {
-    const hasContent = Boolean(el.input.value.trim()) || Boolean(state.pendingGif);
-    el.send.disabled = !hasContent || !state.roomId;
+    const hasContent =
+      Boolean(el.input.value.trim()) || Boolean(state.pendingGif) || state.pendingFiles.length > 0;
+    el.send.disabled = !hasContent || !state.roomId || state.uploading > 0;
   }
 
   function saveDraft() {
@@ -1247,7 +1321,33 @@
   el.form.addEventListener('submit', (event) => {
     event.preventDefault();
     const text = el.input.value.trim();
-    if (!text && !state.pendingGif) return;
+    if (!text && !state.pendingGif && !state.pendingFiles.length) return;
+    const files = state.pendingFiles;
+    state.pendingFiles = [];
+    if (files.length) {
+      [...el.attachRow.querySelectorAll('.attachment')].forEach((card) => {
+        if (card !== el.attach) card.remove();
+      });
+      files.forEach((item, index) => {
+        send({
+          type: 'message',
+          text: index === files.length - 1 && !state.pendingGif ? text : '',
+          attachment: item.attachment,
+          attachmentSig: item.signature,
+          replyTo: index === 0 && state.replyTo ? state.replyTo.id : undefined,
+        });
+      });
+      if (!state.pendingGif) {
+        el.input.value = '';
+        saveDraft();
+        autosize();
+        cancelReply();
+        refreshSendState();
+        stopTyping();
+        return;
+      }
+    }
+
     const payload = { type: 'message', text };
     if (state.pendingGif) payload.gif = state.pendingGif;
     if (state.replyTo) payload.replyTo = state.replyTo.id;
@@ -1270,6 +1370,147 @@
   }
 
   el.attachRemove.addEventListener('click', clearAttachment);
+
+  /* ---------- images and files ---------- */
+
+  function ticketFor() {
+    return new Promise((resolve) => {
+      state.ticketWaiter = resolve;
+      if (!send({ type: 'upload-ticket' })) resolve(null);
+      setTimeout(() => {
+        if (state.ticketWaiter === resolve) {
+          state.ticketWaiter = null;
+          resolve(null);
+        }
+      }, 6000);
+    });
+  }
+
+  function uploadOne(file, ticket) {
+    return new Promise((resolve) => {
+      const card = document.createElement('div');
+      card.className = 'attachment attachment--busy';
+      card.innerHTML =
+        `<div class="attachment__ring"><span></span></div>` +
+        `<div class="attachment__meta"><strong>${EasyMarkdown.escapeHtml(file.name)}</strong>` +
+        `<span>${prettySize(file.size)}</span></div>`;
+      el.attachRow.appendChild(card);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/upload?ticket=${encodeURIComponent(ticket)}`);
+      xhr.setRequestHeader('X-File-Name', encodeURIComponent(file.name).slice(0, 200));
+      xhr.upload.addEventListener('progress', (event) => {
+        if (!event.lengthComputable) return;
+        const percent = Math.round((event.loaded / event.total) * 100);
+        card.style.setProperty('--progress', `${percent}%`);
+      });
+      xhr.addEventListener('load', () => {
+        card.remove();
+        let body = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          body = {};
+        }
+        if (xhr.status !== 200 || !body.attachment) {
+          toast(body.error || 'That file could not be sent.', 'error');
+          return resolve(null);
+        }
+        resolve({ attachment: body.attachment, signature: body.signature });
+      });
+      xhr.addEventListener('error', () => {
+        card.remove();
+        toast('That file could not be sent.', 'error');
+        resolve(null);
+      });
+      xhr.send(file);
+    });
+  }
+
+  async function sendFiles(files) {
+    if (!state.roomId) return toast('Pick a room first.', 'error');
+    const list = [...files].slice(0, 6);
+    if (!list.length) return;
+    const ticket = await ticketFor();
+    if (!ticket) return toast('Could not start the upload. Try again.', 'error');
+
+    state.uploading += list.length;
+    refreshSendState();
+    for (const file of list) {
+      const done = await uploadOne(file, ticket);
+      state.uploading -= 1;
+      if (done) {
+        state.pendingFiles.push(done);
+        showPendingFile(done.attachment);
+      }
+    }
+    refreshSendState();
+    el.input.focus();
+  }
+
+  function showPendingFile(attachment) {
+    const card = document.createElement('div');
+    card.className = 'attachment';
+    if (attachment.kind === 'image') {
+      const img = document.createElement('img');
+      img.src = attachment.url;
+      img.alt = attachment.name;
+      card.appendChild(img);
+    } else {
+      const meta = document.createElement('div');
+      meta.className = 'attachment__meta';
+      meta.innerHTML =
+        `<strong>${EasyMarkdown.escapeHtml(attachment.name)}</strong>` +
+        `<span>${prettySize(attachment.size)}</span>`;
+      card.appendChild(meta);
+    }
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'attachment__remove';
+    remove.setAttribute('aria-label', `Remove ${attachment.name}`);
+    remove.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+    remove.addEventListener('click', () => {
+      state.pendingFiles = state.pendingFiles.filter((item) => item.attachment.url !== attachment.url);
+      card.remove();
+      refreshSendState();
+    });
+    card.appendChild(remove);
+    el.attachRow.appendChild(card);
+  }
+
+  el.attachBtn.addEventListener('click', () => el.fileInput.click());
+  el.fileInput.addEventListener('change', () => {
+    sendFiles(el.fileInput.files);
+    el.fileInput.value = '';
+  });
+
+  el.input.addEventListener('paste', (event) => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    sendFiles(files);
+  });
+
+  ['dragenter', 'dragover'].forEach((kind) =>
+    document.addEventListener(kind, (event) => {
+      if (!state.joined || !event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      if (kind === 'dragenter') state.dragDepth += 1;
+      el.drop.hidden = false;
+    })
+  );
+  document.addEventListener('dragleave', () => {
+    state.dragDepth = Math.max(0, state.dragDepth - 1);
+    if (!state.dragDepth) el.drop.hidden = true;
+  });
+  document.addEventListener('drop', (event) => {
+    if (!state.joined) return;
+    event.preventDefault();
+    state.dragDepth = 0;
+    el.drop.hidden = true;
+    if (event.dataTransfer?.files?.length) sendFiles(event.dataTransfer.files);
+  });
 
   /* ---------- GIF picker ---------- */
 

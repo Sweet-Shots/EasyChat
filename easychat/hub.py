@@ -47,10 +47,11 @@ class Client:
 
 
 class Hub:
-    def __init__(self, store, settings, accounts):
+    def __init__(self, store, settings, accounts, uploads):
         self.store = store
         self.settings = settings
         self.accounts = accounts
+        self.uploads = uploads
         self.lock = threading.RLock()
         self.clients = {}
         self.typing = {}  # room_id -> {client_id: (username, expires_at)}
@@ -228,6 +229,18 @@ class Hub:
             return self._handle_history(client, data)
         if kind == "search":
             return self._handle_search(client, data)
+        if kind == "upload-ticket":
+            if not client.room_id:
+                return
+            return client.send(
+                {
+                    "type": "upload-ticket",
+                    "ticket": self.uploads.mint_ticket(
+                        client.username, client.room_id, store_mod.now_ms()
+                    ),
+                    "maxMb": self.settings.max_upload_mb,
+                }
+            )
 
     def _sign_in_throttled(self, client):
         now = time.time()
@@ -404,6 +417,20 @@ class Hub:
                 "height": height,
                 "title": str(gif.get("title") or "GIF")[:120],
             }
+        if attachment is None:
+            claimed = data.get("attachment")
+            if isinstance(claimed, dict) and claimed.get("kind") in ("image", "file"):
+                if self.uploads.check_attachment(claimed, data.get("attachmentSig")):
+                    attachment = claimed
+                else:
+                    return client.send(
+                        {
+                            "type": "error",
+                            "code": "bad-attachment",
+                            "message": "That upload could not be verified. Try sending it again.",
+                        }
+                    )
+
         if not text and not attachment:
             return
 
@@ -504,6 +531,9 @@ class Hub:
             return client.send({"type": "error", "code": "cannot-delete", "message": problem})
 
         # the text really goes - someone deleting a pasted password means it
+        old = message.get("attachment") or {}
+        if old.get("kind") in ("image", "file"):
+            self.uploads.remove(old.get("url"))
         with self.store.lock:
             message["text"] = ""
             message["attachment"] = None

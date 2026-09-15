@@ -10,6 +10,7 @@ folder on the host machine — nothing is stored anywhere else.
 - Every room has its own password, chosen when the room is made
 - Live typing indicators, presence, unread badges
 - Markdown: `**bold**`, `*italic*`, `__underline__`, `~~strike~~`, `` `code` ``, code blocks, `> quotes`, `||spoilers||`, links, `@mentions`
+- Paste, drag or attach images and files
 - GIF search powered by Tenor
 - An invite code so a stray link-visitor cannot register
 - Desktop notifications and a chime when you are not looking
@@ -160,6 +161,33 @@ rewrites the file, so the plain text does not sit on disk — the console prints
 Guessing is throttled: six wrong passwords from one connection and it stops
 answering for a minute.
 
+## Images and files
+
+Paste a screenshot straight into the message box, drag a file onto the window,
+or use the paperclip. Images show inline; anything else becomes a download
+card. They are stored beside the chats in `EasyChat Chats/files/<room>/`.
+
+Three things keep that safe on a machine reachable from a public link:
+
+- The type is decided by reading the file's first bytes, not by trusting its
+  name. A script renamed `photo.png` is stored as a plain download, never
+  rendered in the page.
+- Everything that is not a known-good image is served with
+  `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`, so an
+  upload cannot become code running on the chat's own address.
+- Uploading needs a short-lived ticket issued over the signed-in connection,
+  and the stored file's description is signed, so nobody can attach a file they
+  did not upload.
+
+File links are long random URLs. Anyone holding a link can open the file
+without signing in — treat a link to a private room's file as private.
+
+Deleting a message deletes its file. So does the 2000-message trim, and
+anything left orphaned is swept at startup.
+
+Limits live in `.env`: `MAX_UPLOAD_MB` (10 by default) and `MAX_STORAGE_MB`
+(1024), so a public link cannot fill the host's disk.
+
 ## The chats folder
 
 ```
@@ -208,6 +236,8 @@ All of these live in `.env`:
 | `TENOR_API_KEY` | _empty_ | Enables GIF search |
 | `CHATS_DIR` | `.\EasyChat Chats` | Where the JSON files live |
 | `MAX_MESSAGES_PER_ROOM` | `2000` | Messages kept per room |
+| `MAX_UPLOAD_MB` | `10` | Largest single upload |
+| `MAX_STORAGE_MB` | `1024` | Total disk the uploads folder may use |
 
 ## Shortcuts
 

@@ -19,6 +19,7 @@ from easychat.accounts import Accounts  # noqa: E402
 from easychat.config import Settings, load_env  # noqa: E402
 from easychat.hub import Hub  # noqa: E402
 from easychat.store import ChatStore  # noqa: E402
+from easychat.uploads import Uploads  # noqa: E402
 
 HEARTBEAT_SECONDS = 30
 TYPING_SWEEP_SECONDS = 2.5
@@ -91,13 +92,25 @@ def main():
         print(f"Cannot find the web files at {settings.public_dir}")
         return 1
 
-    store = ChatStore(settings.chats_dir, settings.max_messages).init()
     accounts = Accounts(settings.accounts_dir, settings.room_password, settings.host_names).init()
-    hub = Hub(store, settings, accounts)
+    uploads = Uploads(
+        settings.files_dir, accounts.secret, settings.max_upload_mb, settings.max_storage_mb
+    ).init()
+
+    def drop_file(message):
+        attachment = message.get("attachment") or {}
+        if attachment.get("kind") in ("image", "file"):
+            uploads.remove(attachment.get("url"))
+
+    store = ChatStore(settings.chats_dir, settings.max_messages, on_trim=drop_file).init()
+    orphans = uploads.sweep(store.attachment_urls())
+    if orphans:
+        print(f"  Cleaned up {orphans} uploaded file(s) no message points at any more.")
+    hub = Hub(store, settings, accounts, uploads)
 
     try:
         server = httpd.ChatServer(
-            ("0.0.0.0", settings.port), httpd.ChatHandler, settings, store, hub, accounts
+            ("0.0.0.0", settings.port), httpd.ChatHandler, settings, store, hub, accounts, uploads
         )
     except OSError as err:
         print(f"\nCould not listen on port {settings.port}: {err}")

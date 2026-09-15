@@ -119,6 +119,12 @@
       <div id="room-online" class="pill pill--online"><i></i><span>0 online</span></div>
     </header>
 
+    <div id="drop" class="drop" hidden>
+      <div class="drop__card">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>Drop to send</span>
+      </div>
+    </div>
     <div id="messages" class="messages" role="log" aria-live="polite">
       <div id="messages-inner" class="messages__inner"></div>
     </div>
@@ -144,13 +150,19 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
         </button>
       </div>
-      <div id="gif-attachment" class="attachment" hidden>
-        <img id="gif-attachment-img" alt="" />
-        <button id="gif-attachment-remove" class="attachment__remove" type="button" aria-label="Remove GIF">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
-        </button>
+      <div id="attach-row" class="attach-row">
+        <div id="gif-attachment" class="attachment" hidden>
+          <img id="gif-attachment-img" alt="" />
+          <button id="gif-attachment-remove" class="attachment__remove" type="button" aria-label="Remove GIF">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+          </button>
+        </div>
       </div>
       <form id="composer-form" class="composer__bar">
+        <button id="attach-btn" class="icon-btn composer__action" type="button" aria-label="Attach a file" title="Attach an image or file">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9.5 11.8 15.7a2.9 2.9 0 0 1-4.1-4.1l6.9-6.9a4.4 4.4 0 0 1 6.2 6.2l-7 7a5.9 5.9 0 0 1-8.4-8.3l6.3-6.3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <input id="file-input" type="file" hidden multiple />
         <button id="gif-btn" class="icon-btn composer__action" type="button" aria-label="Search GIFs" title="GIFs">
           <span class="gif-glyph">GIF</span>
         </button>

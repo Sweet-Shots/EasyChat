@@ -6,7 +6,8 @@ import posixpath
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import gifs, wsproto
+from . import gifs, store, wsproto
+from . import uploads as uploads_mod
 
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("image/svg+xml", ".svg")
@@ -17,12 +18,13 @@ class ChatServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, address, handler, settings, store, hub, accounts):
+    def __init__(self, address, handler, settings, store, hub, accounts, uploads):
         super().__init__(address, handler)
         self.settings = settings
         self.store = store
         self.hub = hub
         self.accounts = accounts
+        self.uploads = uploads
 
 
 class ChatHandler(BaseHTTPRequestHandler):
@@ -77,7 +79,71 @@ class ChatHandler(BaseHTTPRequestHandler):
             return self.handle_gifs(path.rsplit("/", 1)[-1], query)
         if path.startswith("/api/"):
             return self.send_json({"error": "Unknown endpoint."}, 404)
+        if path.startswith("/files/"):
+            return self.serve_upload(path[len("/files/") :])
         return self.serve_static(path)
+
+    def do_POST(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path != "/api/upload":
+            return self.send_json({"error": "Unknown endpoint."}, 404)
+
+        uploads = self.server.uploads
+        query = urllib.parse.parse_qs(parsed.query)
+        ticket = (query.get("ticket") or [""])[0]
+        seat = uploads.check_ticket(ticket, store.now_ms())
+        if not seat:
+            self.close_connection = True
+            return self.send_json({"error": "Upload permission expired. Try again."}, 403)
+        _username, room_id = seat
+
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0:
+            return self.send_json({"error": "Nothing to upload."}, 400)
+        if length > uploads.max_file_bytes:
+            # read nothing: refuse before pulling megabytes off the wire
+            self.close_connection = True
+            return self.send_json(
+                {"error": f"Files have to be under {uploads.max_file_bytes // (1024 * 1024)} MB."}, 413
+            )
+
+        data = self.rfile.read(length)
+        try:
+            attachment = uploads.store(room_id, data, self.headers.get("X-File-Name", ""))
+        except ValueError as err:
+            return self.send_json({"error": str(err)}, 507)
+        except OSError as err:
+            print(f"[uploads] {err}")
+            return self.send_json({"error": "The host could not save that file."}, 500)
+
+        return self.send_json(
+            {"attachment": attachment, "signature": uploads.sign_attachment(attachment)}
+        )
+
+    def serve_upload(self, relative):
+        target = self.server.uploads.resolve(relative)
+        if target is None:
+            return self.send_json({"error": "Not found."}, 404)
+        try:
+            body = target.read_bytes()
+        except OSError:
+            return self.send_json({"error": "Not found."}, 404)
+
+        mime, _ext, is_image = uploads_mod.sniff(body[:32])
+        self.send_response(200)
+        self.send_header("Content-Type", mime if is_image else "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        # never let an upload be sniffed into script on this origin
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; img-src 'self'")
+        if not is_image:
+            self.send_header("Content-Disposition", "attachment")
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.end_headers()
+        self.wfile.write(body)
 
     def handle_gifs(self, mode, query):
         settings = self.server.settings

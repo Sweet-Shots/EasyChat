@@ -42,6 +42,9 @@ class Settings:
         self.public_dir = ROOT / "public"
         # a subfolder, so the room loader's *.json scan never sees these
         self.accounts_dir = self.chats_dir / "accounts"
+        self.files_dir = self.chats_dir / "files"
+        self.max_upload_mb = _int("MAX_UPLOAD_MB", 10)
+        self.max_storage_mb = _int("MAX_STORAGE_MB", 1024)
         self.host_names = [name for name in os.environ.get("HOST_USERS", "").split(",") if name.strip()]
 
     @property

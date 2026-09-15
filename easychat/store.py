@@ -60,9 +60,10 @@ def now_ms():
 
 
 class ChatStore:
-    def __init__(self, directory, max_messages=2000):
+    def __init__(self, directory, max_messages=2000, on_trim=None):
         self.dir = directory
         self.max_messages = max_messages
+        self.on_trim = on_trim  # called with each message that falls off the end
         self.rooms = {}
         self.lock = threading.RLock()
         self._timers = {}
@@ -108,6 +109,17 @@ class ChatStore:
         return self.dir / f"{room_id}.json"
 
     # ---------- reading ----------
+
+    def attachment_urls(self):
+        """Every file path still referenced by a message, for the orphan sweep."""
+        urls = []
+        with self.lock:
+            for room in self.rooms.values():
+                for message in room["messages"]:
+                    attachment = message.get("attachment") or {}
+                    if attachment.get("kind") in ("image", "file"):
+                        urls.append(attachment.get("url"))
+        return urls
 
     def list_rooms(self):
         with self.lock:
@@ -167,7 +179,11 @@ class ChatStore:
             room["messages"].append(message)
             extra = len(room["messages"]) - self.max_messages
             if extra > 0:
+                dropped = room["messages"][:extra]
                 del room["messages"][:extra]
+                if self.on_trim:
+                    for old in dropped:
+                        self.on_trim(old)
         self.schedule_save(room_id)
         return message
 
