@@ -213,7 +213,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'empty';
     wrap.innerHTML =
-      '<div class="empty__mark">&#128172;</div>' +
+      '<div class="empty__mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A3.5 3.5 0 0 1 6.5 3h11A3.5 3.5 0 0 1 21 6.5v7a3.5 3.5 0 0 1-3.5 3.5H10l-4.6 3.7A.9.9 0 0 1 4 20v-3.2A3.5 3.5 0 0 1 3 14.3Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8 8.5h8M8 12h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></div>' +
       '<h3>Nothing here yet</h3>' +
       `<p>Be the first to say something in ${EasyMarkdown.escapeHtml(roomLabel)}.</p>`;
     el.inner.appendChild(wrap);
@@ -414,7 +414,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'empty';
     wrap.innerHTML =
-      '<div class="empty__mark">&#128274;</div>' +
+      '<div class="empty__mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 10V7.5a4 4 0 0 1 8 0V10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><rect x="4.5" y="10" width="15" height="10.5" rx="2.6" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="15.2" r="1.5" fill="currentColor"/></svg></div>' +
       '<h3>Pick a room</h3>' +
       '<p>The rooms in the list need a password. Choose one and type its password, or create a room of your own.</p>';
     el.inner.appendChild(wrap);
