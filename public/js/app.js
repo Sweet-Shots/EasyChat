@@ -96,6 +96,14 @@
     profileRemove: $('profile-remove'),
     profileFile: $('profile-file'),
     profileColors: $('profile-colors'),
+    chatBg: $('chat-bg'),
+    bgPresets: $('bg-presets'),
+    bgUpload: $('bg-upload'),
+    bgClear: $('bg-clear'),
+    bgFile: $('bg-file'),
+    bgDimField: $('bg-dim-field'),
+    bgDim: $('bg-dim'),
+    bgDimValue: $('bg-dim-value'),
     profileError: $('profile-error'),
     profileClose: $('profile-close'),
     emojiPanel: $('emoji-panel'),
@@ -193,6 +201,8 @@
     isOwner: false,
     accounts: [],
     announceColor: '#dc2626',
+    background: '',
+    backgroundDim: 65,
     announcementId: '',
     profiles: {},
     dismissed: '',
@@ -1243,6 +1253,13 @@
         state.rooms = data.rooms || [];
         state.profiles = data.profiles || {};
         state.commands = data.commands || [];
+        if (data.settings) {
+          state.background = data.settings.background || '';
+          state.backgroundDim = Number.isFinite(data.settings.backgroundDim)
+            ? data.settings.backgroundDim
+            : 65;
+          applyBackground();
+        }
         if (data.unread) {
           state.unread = new Map(Object.entries(data.unread).filter(([, count]) => count > 0));
         }
@@ -1363,6 +1380,13 @@
       case 'profiles':
         state.profiles = data.profiles || {};
         repaintPeople();
+        break;
+
+      case 'settings':
+        state.background = data.background || '';
+        state.backgroundDim = Number.isFinite(data.backgroundDim) ? data.backgroundDim : 65;
+        applyBackground();
+        if (!el.profileModal.hidden) renderBackgroundPicker();
         break;
 
       case 'profile-saved':
@@ -1713,10 +1737,10 @@
 
   /* ---------- images and files ---------- */
 
-  function ticketFor(forAvatar) {
+  function ticketFor(target) {
     return new Promise((resolve) => {
       state.ticketWaiter = resolve;
-      if (!send({ type: 'upload-ticket', avatar: Boolean(forAvatar) })) resolve(null);
+      if (!send({ type: 'upload-ticket', target: target || '' })) resolve(null);
       setTimeout(() => {
         if (state.ticketWaiter === resolve) {
           state.ticketWaiter = null;
@@ -2303,6 +2327,84 @@ ${rows}
     closeEmojiPicker();
   });
 
+  /* ---------- your background ---------- */
+
+  const BACKGROUNDS = [
+    { id: '', label: 'None' },
+    { id: 'preset:dusk', label: 'Dusk' },
+    { id: 'preset:paper', label: 'Paper' },
+    { id: 'preset:ink', label: 'Ink' },
+    { id: 'preset:mist', label: 'Mist' },
+  ];
+
+  function applyBackground() {
+    const value = state.background;
+    const dim = state.backgroundDim;
+    document.body.classList.toggle('has-bg', Boolean(value));
+    el.chatBg.dataset.preset = value.startsWith('preset:') ? value.slice(7) : '';
+    el.chatBg.style.backgroundImage =
+      value && !value.startsWith('preset:') ? `url("${encodeURI(value)}")` : '';
+    el.chatBg.style.setProperty('--dim', String(dim / 100));
+    el.bgDimField.hidden = !value;
+    el.bgClear.hidden = !value;
+    el.bgDim.value = String(dim);
+    el.bgDimValue.textContent = `${dim}%`;
+  }
+
+  function renderBackgroundPicker() {
+    el.bgPresets.textContent = '';
+    for (const option of BACKGROUNDS) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `bg${option.id === state.background ? ' bg--on' : ''}`;
+      button.dataset.preset = option.id.startsWith('preset:') ? option.id.slice(7) : '';
+      button.title = option.label;
+      button.setAttribute('aria-label', option.label);
+      if (!option.id) button.textContent = 'None';
+      button.addEventListener('click', () => send({ type: 'background', background: option.id }));
+      el.bgPresets.appendChild(button);
+    }
+    // an uploaded picture gets its own slot at the end
+    if (state.background && !state.background.startsWith('preset:')) {
+      const mine = document.createElement('button');
+      mine.type = 'button';
+      mine.className = 'bg bg--on';
+      mine.style.backgroundImage = `url("${encodeURI(state.background)}")`;
+      mine.title = 'Your picture';
+      mine.setAttribute('aria-label', 'Your picture');
+      el.bgPresets.appendChild(mine);
+    }
+  }
+
+  el.bgUpload.addEventListener('click', () => el.bgFile.click());
+  el.bgClear.addEventListener('click', () => send({ type: 'background', background: '' }));
+  el.bgDim.addEventListener('input', () => {
+    state.backgroundDim = Number(el.bgDim.value);
+    applyBackground();
+  });
+  el.bgDim.addEventListener('change', () => {
+    send({ type: 'background', background: state.background, dim: Number(el.bgDim.value) });
+  });
+
+  el.bgFile.addEventListener('change', async () => {
+    const file = el.bgFile.files[0];
+    el.bgFile.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      el.profileError.textContent = 'Backgrounds have to be an image.';
+      el.profileError.hidden = false;
+      return;
+    }
+    el.profileError.hidden = true;
+    el.bgUpload.disabled = true;
+    el.bgUpload.textContent = 'Uploading…';
+    const ticket = await ticketFor('backgrounds');
+    const done = ticket ? await uploadOne(file, ticket) : null;
+    el.bgUpload.disabled = false;
+    el.bgUpload.textContent = 'Upload a picture';
+    if (done) send({ type: 'background', background: done.attachment.url });
+  });
+
   /* ---------- you: picture, colour, theme ---------- */
 
   const NAME_COLORS = [
@@ -2381,6 +2483,7 @@ ${rows}
   el.profileOpen.addEventListener('click', () => {
     el.profileError.hidden = true;
     renderProfileDialog();
+    renderBackgroundPicker();
     openDialog(el.profileModal, el.profileUpload);
   });
   el.profileClose.addEventListener('click', () => closeDialog(el.profileModal));
@@ -2402,7 +2505,7 @@ ${rows}
     el.profileError.hidden = true;
     el.profileUpload.disabled = true;
     el.profileUpload.textContent = 'Uploading…';
-    const ticket = await ticketFor(true);
+    const ticket = await ticketFor('avatars');
     const done = ticket ? await uploadOne(file, ticket) : null;
     el.profileUpload.disabled = false;
     el.profileUpload.textContent = 'Upload a picture';

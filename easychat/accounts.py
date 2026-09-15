@@ -203,6 +203,43 @@ class Accounts:
         self.save()
         return record
 
+    PRESET_BACKGROUNDS = ("dusk", "paper", "ink", "mist")
+
+    def settings(self, username):
+        """The bits that are yours alone, sent only to you."""
+        record = self.get(username) or {}
+        return {
+            "background": record.get("background", ""),
+            "backgroundDim": int(record.get("backgroundDim", 65)),
+        }
+
+    def backgrounds(self):
+        """Every uploaded background still in use, for the orphan sweep."""
+        with self.lock:
+            return [
+                r["background"]
+                for r in self.users.values()
+                if str(r.get("background", "")).startswith("/files/")
+            ]
+
+    def set_background(self, username, background, dim=None):
+        record = self.get(username)
+        if not record:
+            raise AccountError("no-account", "There is no such account.")
+        with self.lock:
+            if background is not None:
+                if background:
+                    record["background"] = str(background)[:300]
+                else:
+                    record.pop("background", None)
+            if dim is not None:
+                try:
+                    record["backgroundDim"] = max(0, min(90, int(dim)))
+                except (TypeError, ValueError):
+                    pass
+        self.save()
+        return record
+
     def set_profile(self, username, *, color=None, avatar=None):
         """What someone looks like to everyone else."""
         record = self.get(username)

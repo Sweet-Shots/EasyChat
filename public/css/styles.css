@@ -655,6 +655,95 @@ button, input, textarea { font: inherit; color: inherit; }
   100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
 }
 
+/* ---------- your own background ---------- */
+
+.chat-bg {
+  position: absolute;
+  inset: 68px 0 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+.chat-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* the fade that keeps the conversation readable over a busy picture */
+  background: var(--surface);
+  opacity: var(--dim, .55);
+}
+.chat-bg[data-preset="dusk"] { background-image: linear-gradient(160deg, #1e3a8a, #4c1d95 55%, #831843); }
+.chat-bg[data-preset="paper"] { background-image: linear-gradient(160deg, #fef3c7, #fed7aa 55%, #fbcfe8); }
+.chat-bg[data-preset="ink"] { background-image: linear-gradient(160deg, #0f172a, #164e63 60%, #065f46); }
+.chat-bg[data-preset="mist"] { background-image: linear-gradient(160deg, #c7d2fe, #a5f3fc 55%, #bbf7d0); }
+
+body.has-bg .messages { background: none; }
+body.has-bg .messages,
+body.has-bg .composer { position: relative; z-index: 1; }
+
+/* the composer keeps its own ground so the box never floats on a photo */
+body.has-bg .composer {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(10px);
+}
+body.has-bg .typing {
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  backdrop-filter: blur(10px);
+}
+/* and the quiet furniture gets a chip, or it disappears into the picture */
+body.has-bg .day { color: var(--ink-700); }
+body.has-bg .day::before,
+body.has-bg .day::after { opacity: .5; }
+body.has-bg .day span,
+body.has-bg .day {
+  text-shadow: 0 1px 0 var(--surface);
+}
+body.has-bg .sys {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(4px);
+}
+body.has-bg .bubble--them {
+  background: color-mix(in srgb, var(--bubble-them) 94%, transparent);
+  backdrop-filter: blur(4px);
+}
+
+/* the picker in the You panel */
+.bgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.bg {
+  width: 52px;
+  height: 36px;
+  padding: 0;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  background-size: cover;
+  background-position: center;
+  color: var(--ink-500);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .16s var(--ease), box-shadow .16s var(--ease);
+}
+.bg:hover { transform: translateY(-1px); }
+.bg--on { box-shadow: 0 0 0 2px var(--card), 0 0 0 4px var(--blue-500); }
+.bg[data-preset="dusk"] { background-image: linear-gradient(160deg, #1e3a8a, #4c1d95 55%, #831843); }
+.bg[data-preset="paper"] { background-image: linear-gradient(160deg, #fef3c7, #fed7aa 55%, #fbcfe8); }
+.bg[data-preset="ink"] { background-image: linear-gradient(160deg, #0f172a, #164e63 60%, #065f46); }
+.bg[data-preset="mist"] { background-image: linear-gradient(160deg, #c7d2fe, #a5f3fc 55%, #bbf7d0); }
+
+.field--slider { margin-bottom: 14px; }
+.slider {
+  width: 100%;
+  height: 22px;
+  margin: 2px 0 0;
+  padding: 0;
+  background: none;
+  accent-color: var(--blue-500);
+  cursor: pointer;
+}
+
 /* ---------- messages ---------- */
 .messages {
   flex: 1;

@@ -106,9 +106,11 @@ def main():
             uploads.remove(attachment.get("url"))
 
     store = ChatStore(settings.chats_dir, settings.max_messages, on_trim=drop_file).init()
-    in_use = store.attachment_urls() + [
-        profile["avatar"] for profile in accounts.profiles().values() if profile.get("avatar")
-    ]
+    in_use = (
+        store.attachment_urls()
+        + [profile["avatar"] for profile in accounts.profiles().values() if profile.get("avatar")]
+        + accounts.backgrounds()
+    )
     orphans = uploads.sweep(in_use)
     if orphans:
         print(f"  Cleaned up {orphans} uploaded file(s) no message points at any more.")

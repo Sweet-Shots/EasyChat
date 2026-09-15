@@ -135,6 +135,7 @@
       <div id="room-online" class="pill pill--online"><i></i><span>0 online</span></div>
     </header>
 
+    <div id="chat-bg" class="chat-bg" aria-hidden="true"></div>
     <div id="drop" class="drop" hidden>
       <div class="drop__card">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 15v3a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-3" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -267,6 +268,19 @@
 
     <span class="field__label">Your colour</span>
     <div id="profile-colors" class="swatches swatches--wrap"></div>
+
+    <span class="field__label">Background</span>
+    <div id="bg-presets" class="bgs"></div>
+    <div class="profile__pick">
+      <button id="bg-upload" class="btn btn--ghost btn--tiny" type="button">Upload a picture</button>
+      <button id="bg-clear" class="btn btn--ghost btn--tiny btn--warn" type="button" hidden>Remove</button>
+      <input id="bg-file" type="file" accept="image/*" hidden />
+    </div>
+    <label class="field field--slider" id="bg-dim-field" hidden>
+      <span class="field__label">Fade it back <span id="bg-dim-value" class="field__opt">65%</span></span>
+      <input id="bg-dim" class="slider" type="range" min="0" max="90" step="5" value="65" />
+    </label>
+    <p class="profile__hint">Your background is yours alone — nobody else sees it, and it follows your account to any device.</p>
 
     <span class="field__label">Appearance</span>
     <div class="seg" role="group" aria-label="Theme">

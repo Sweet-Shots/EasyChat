@@ -113,8 +113,22 @@ The person button next to your name opens **You**:
 - **Your colour.** Pick one and your name appears in it for everyone. Leave it
   on automatic and a colour is derived from your name, so people still look
   distinct.
+- **A background.** Four built-in gradients, or upload your own picture, with a
+  slider to fade it back so the conversation stays readable. It is yours alone —
+  nobody else sees it.
 - **Light, dark, or follow the device.** Dark mode keeps the same blue but on a
-  deep navy ground. The choice is remembered per browser.
+  deep navy ground.
+
+Your picture, colour and background live on your account, so they follow you to
+any device and survive the tunnel URL changing. The light/dark choice is the one
+thing kept per browser, so a phone can be dark while a desktop is light.
+
+**Why that distinction matters:** browser storage is tied to the exact web
+address. When a quick tunnel hands out a new `trycloudflare.com` name, that is a
+new address as far as the browser is concerned, and anything kept locally is
+gone. That is also why everyone has to sign in again after the link changes —
+their accounts are safe on the host, but the "stay signed in" token was stored
+in their browser under the old address.
 
 **Reactions** live on the hover bar next to reply. Emoji are deliberate there —
 a reaction *is* the emoji, unlike the interface itself, which stays line art.

@@ -246,6 +246,8 @@ class Hub:
             return self._handle_react(client, data)
         if kind == "profile":
             return self._handle_profile(client, data)
+        if kind == "background":
+            return self._handle_background(client, data)
         if kind == "accounts":
             return self._handle_accounts(client)
         if kind == "account-action":
@@ -266,7 +268,8 @@ class Hub:
                 self.read_state.mark(client.username, room_id, ts)
             return
         if kind == "upload-ticket":
-            target = "avatars" if data.get("avatar") else client.room_id
+            wanted = str(data.get("target") or ("avatars" if data.get("avatar") else ""))
+            target = wanted if wanted in ("avatars", "backgrounds") else client.room_id
             if not target:
                 return
             return client.send(
@@ -334,6 +337,7 @@ class Hub:
                 "gifsEnabled": self.settings.gifs_enabled,
                 "unread": self.read_state.unread_counts(client.username, self.store),
                 "profiles": self.accounts.profiles(),
+                "settings": self.accounts.settings(client.username),
                 "commands": commands_mod.listing(client.is_host),
             }
         )
@@ -660,6 +664,51 @@ class Hub:
             self.uploads.remove(previous)  # one picture per person, no orphans
         self.broadcast_all({"type": "profiles", "profiles": self.accounts.profiles()})
         client.send({"type": "profile-saved"})
+
+    def _handle_background(self, client, data):
+        background = data.get("background")
+        if background:
+            preset = str(background)
+            if preset.startswith("preset:"):
+                if preset[len("preset:") :] not in self.accounts.PRESET_BACKGROUNDS:
+                    return client.send(
+                        {"type": "error", "code": "bad-background", "message": "Unknown background."}
+                    )
+            elif preset.startswith("/files/backgrounds/"):
+                stored = self.uploads.resolve(preset[len("/files/") :])
+                if not stored:
+                    return client.send(
+                        {
+                            "type": "error",
+                            "code": "bad-background",
+                            "message": "That picture is no longer there.",
+                        }
+                    )
+                with open(stored, "rb") as handle:
+                    if not uploads_mod.sniff(handle.read(32))[2]:
+                        self.uploads.remove(preset)
+                        return client.send(
+                            {
+                                "type": "error",
+                                "code": "bad-background",
+                                "message": "Backgrounds have to be an image.",
+                            }
+                        )
+            else:
+                return client.send(
+                    {"type": "error", "code": "bad-background", "message": "That background cannot be used."}
+                )
+
+        previous = (self.accounts.get(client.username) or {}).get("background", "")
+        try:
+            self.accounts.set_background(client.username, background, data.get("dim"))
+        except AccountError as err:
+            return client.send({"type": "error", "code": err.code, "message": err.message})
+
+        # one background per person, so the old upload goes
+        if previous.startswith("/files/") and previous != background:
+            self.uploads.remove(previous)
+        client.send({"type": "settings", **self.accounts.settings(client.username)})
 
     # ---------- owner: the whole place ----------
 
